@@ -43,6 +43,7 @@ export async function formatItem(
       "pages",
       "DOI",
       "url",
+      "extra",
       "abstractNote",
       "tags",
       "notes",

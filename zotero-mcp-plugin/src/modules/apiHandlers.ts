@@ -40,6 +40,12 @@ function resolveLibraryID(query: URLSearchParams): number {
     throw new MCPError(400, "Invalid libraryID: must be an integer");
   }
 
+  // Some MCP clients pass 0 as a placeholder for the default user library.
+  // Zotero library IDs are positive; treat 0 the same as an omitted libraryID.
+  if (libraryID === 0) {
+    return Zotero.Libraries.userLibraryID;
+  }
+
   return libraryID;
 }
 
