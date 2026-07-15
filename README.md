@@ -6,7 +6,7 @@ _This README is also available in: [:cn: 简体中文](./README-zh.md) | :gb: En
 [![zotero target version](https://img.shields.io/badge/Zotero-7-green?style=flat-square&logo=zotero&logoColor=CC2936)](https://www.zotero.org)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-green)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue)](https://www.typescriptlang.org)
-[![Version](https://img.shields.io/badge/Version-1.5.0-brightgreen)]()
+[![Version](https://img.shields.io/badge/Version-1.4.8-brightgreen)]()
 [![EN doc](https://img.shields.io/badge/Document-English-blue.svg)](README.md)
 [![中文文档](https://img.shields.io/badge/文档-中文-blue.svg)](README-zh.md)
 
@@ -26,6 +26,7 @@ The Zotero MCP server is a tool server based on the Model Context Protocol that 
 - 🧠 **Semantic Search**: AI-powered concept matching via embedding vectors, discover related literature across languages
 - ✏️ **Write Operations**: Create notes, manage tags, update metadata, create new items and attach PDFs
 - 💾 **Full-text Database**: Access and search cached PDF full-text content
+- 📑 **Citation Export**: Export BibLaTeX/BibTeX entries via Better BibTeX, generate CSL-formatted references and in-text citations
 
 This enables AI assistants to help you with literature reviews, citation management, content analysis, annotation organization, knowledge base management, and more.
 
@@ -171,6 +172,7 @@ Example configuration for Claude Desktop:
     - Collection/item context menu for index management
 -   **Write Operations**: Create/modify notes, manage tags, update metadata fields, create new items and reparent standalone PDFs
 -   **Full-text Database**: Cached PDF full-text database with list, search, get, and stats operations
+-   **Citation & Bibliography Export**: Export BibLaTeX/BibTeX entries via Better BibTeX JSON-RPC, generate CSL-formatted references and in-text citations with customizable styles, list available citation styles
 -   **Standalone Attachment Management**: Search and manage standalone PDF items without parent metadata
 -   **Client Configuration Generator**: Automatically generates configuration for various AI clients
 -   **Security**: Local-only operation ensuring complete data privacy
@@ -196,7 +198,7 @@ Here are some screenshots demonstrating the functionality of Zotero MCP:
 
 ## 🔧 API Reference (MCP Tools)
 
-The integrated MCP server provides **20 tools** in 5 categories:
+The integrated MCP server provides **23 tools** in 6 categories:
 
 ### 1. Search & Query (7 tools)
 
@@ -275,6 +277,20 @@ Update metadata fields on items (title, abstract, date, DOI, creators, etc.).
 #### `write_item`
 Create new items or reparent existing attachments.
 - `action` (required: create/reparent), `itemType`, `fields`, `creators`, `tags`, `attachmentKeys`, `parentKey`
+
+### 6. Citation & Bibliography Export (3 tools)
+
+#### `export_bibliography`
+Export one or more Zotero items as BibLaTeX/BibTeX (or CSL-JSON/CSL-YAML) entries via the zotero-better-bibtex (BBT) plugin. Requires Better BibTeX to be installed and running.
+- `itemKeys` (required: string[]), `format` (biblatex/bibtex/csljson/cslyaml), `libraryID`, `exportNotes`, `useJournalAbbreviation`
+
+#### `get_citation`
+Generate a formatted reference (bibliography entry) or in-text citation for items using a CSL citation style. If no style is specified, uses the Zotero default Quick Copy style. Works without Better BibTeX.
+- `itemKeys` (required: string[]), `style` (CSL style ID or title, e.g. "apa"/"ieee"), `contentType` (html/text), `mode` (bibliography/citation), `libraryID`
+
+#### `list_citation_styles`
+List CSL citation styles available in Zotero (for use with `get_citation`). Each entry includes an id and title. Supports optional keyword filtering.
+- `filter` (optional keyword to filter by title or id)
 
 ---
 

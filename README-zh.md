@@ -6,7 +6,7 @@ _This README is also available in: [:gb: English](./README.md) | :cn: 简体中�
 [![zotero target version](https://img.shields.io/badge/Zotero-7-green?style=flat-square&logo=zotero&logoColor=CC2936)](https://www.zotero.org)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-green)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue)](https://www.typescriptlang.org)
-[![Version](https://img.shields.io/badge/Version-1.5.0-brightgreen)]()
+[![Version](https://img.shields.io/badge/Version-1.4.8-brightgreen)]()
 [![EN doc](https://img.shields.io/badge/Document-English-blue.svg)](README.md)
 [![中文文档](https://img.shields.io/badge/文档-中文-blue.svg)](README-zh.md)
 
@@ -27,6 +27,7 @@ Zotero MCP 服务器是一个基于 Model Context Protocol 的工具服务器，
 - 🧠 **语义搜索**：基于 AI 向量嵌入的概念匹配，发现跨语言的相关文献
 - ✏️ **写入操作**：创建笔记、管理标签、更新元数据、创建新条目并关联附件
 - 💾 **全文数据库**：访问和搜索缓存的 PDF 全文内容
+- 📑 **引文导出**：通过 Better BibTeX 导出 BibLaTeX/BibTeX 条目，生成 CSL 格式的参考文献和文内引用
 
 这使得 AI 助手能够帮助您进行文献综述、引用管理、内容分析、批注整理、知识库管理等学术工作。
 
@@ -160,6 +161,7 @@ AI 客户端 ↔ Streamable HTTP ↔ Zotero 插件（集成 MCP 服务器）
 -   **语义搜索**: 基于 AI 向量嵌入的语义搜索，支持 OpenAI/Ollama API，发现概念相关的文献
 -   **写入功能**: 创建/修改笔记、管理标签、更新元数据字段、创建新条目并关联独立 PDF
 -   **全文数据库**: 缓存的 PDF 全文数据库，支持列表、搜索、获取和统计操作
+-   **引文与参考文献导出**: 通过 Better BibTeX JSON-RPC 导出 BibLaTeX/BibTeX 条目，生成可自定义 CSL 样式的参考文献和文内引用，列出可用引文样式
 -   **独立附件管理**: 搜索和管理只有 PDF 没有元数据信息的独立条目
 -   **客户端配置生成器**: 自动为各种 AI 客户端生成配置
 -   **安全性**: 仅本地操作，确保数据完全隐私
@@ -312,7 +314,7 @@ MCP 服务器已集成在插件内，位于 `src/modules/streamableMCPServer.ts`
 
 ## 🔧 API 参考（MCP 工具列表）
 
-插件集成的 MCP 服务器提供以下 **20 个工具**，分为 5 大类：
+插件集成的 MCP 服务器提供以下 **23 个工具**，分为 6 大类：
 
 ### 一、搜索与查询（7 个）
 
@@ -463,6 +465,37 @@ MCP 服务器已集成在插件内，位于 `src/modules/streamableMCPServer.ts`
 | `tags` | string[] | 标签 |
 | `attachmentKeys` | string[] | 要关联的独立附件 Key 列表 |
 | `parentKey` | string | reparent 操作的目标父条目 Key |
+
+### 六、引文与参考文献导出（3 个）
+
+#### `export_bibliography`
+通过 zotero-better-bibtex (BBT) 插件将一个或多个条目导出为 BibLaTeX/BibTeX（或 CSL-JSON/CSL-YAML）条目。需安装并启用 Better BibTeX。
+
+| 参数 | 类型 | 描述 |
+|---|---|---|
+| `itemKeys` | string[] | **必需**，要导出的条目 Key 列表 |
+| `format` | string | 导出格式：biblatex(默认)/bibtex/csljson/cslyaml |
+| `libraryID` | number | 目标库 ID（默认用户库） |
+| `exportNotes` | boolean | 是否导出笔记（默认 false） |
+| `useJournalAbbreviation` | boolean | 是否使用期刊缩写（默认 false） |
+
+#### `get_citation`
+使用 CSL 引文样式为条目生成格式化的参考文献条目或文内引用。未指定样式时使用 Zotero 默认 Quick Copy 样式。无需 Better BibTeX。
+
+| 参数 | 类型 | 描述 |
+|---|---|---|
+| `itemKeys` | string[] | **必需**，要引用的条目 Key 列表 |
+| `style` | string | CSL 样式 ID 或标题（如 "apa"/"ieee"），省略则使用默认样式 |
+| `contentType` | string | 输出格式：html(默认)/text |
+| `mode` | string | 生成模式：bibliography(默认，参考文献条目)/citation(文内引用) |
+| `libraryID` | number | 目标库 ID（默认用户库） |
+
+#### `list_citation_styles`
+列出 Zotero 中可用的 CSL 引文样式（供 `get_citation` 使用），每项包含 id 和 title，支持关键字过滤。
+
+| 参数 | 类型 | 描述 |
+|---|---|---|
+| `filter` | string | 可选关键字，按标题或 ID 过滤（如 "apa"/"ieee"/"chicago"） |
 
 ---
 
