@@ -229,36 +229,11 @@ export class CitationExportService {
 
     return {
       format: normalizedFormat,
-      translator,
-      betterbibtexVersion: bbtStatus.betterbibtexVersion,
       content: exportString,
       exportedCount: citekeys.length,
       citationKeys: citekeys,
-      citationKeyMap: this.buildKeyMap(itemKeys, citekeys, missing),
-      missingKeys: missing,
-      options: {
-        exportNotes,
-        useJournalAbbreviation,
-      },
+      missingKeys: missing.length > 0 ? missing : undefined,
     };
-  }
-
-  /** 构造 itemKey -> citekey 的可读映射 */
-  private buildKeyMap(
-    itemKeys: string[],
-    citekeys: string[],
-    missing: string[],
-  ): Record<string, string | null> {
-    const map: Record<string, string | null> = {};
-    let ci = 0;
-    for (const k of itemKeys) {
-      if (missing.includes(k)) {
-        map[k] = null;
-      } else {
-        map[k] = citekeys[ci++] ?? null;
-      }
-    }
-    return map;
   }
 
   /**
@@ -437,13 +412,11 @@ export class CitationExportService {
 
     return {
       mode,
-      style: styleInfo,
-      contentType,
+      style: styleInfo.id ?? undefined,
+      styleTitle: styleInfo.title ?? undefined,
       content: contentType === "text" ? text : html,
-      html,
-      text,
       itemCount: items.length,
-      missingKeys: missing,
+      missingKeys: missing.length > 0 ? missing : undefined,
     };
   }
 
@@ -463,9 +436,6 @@ export class CitationExportService {
     let mapped = styles.map((s: any) => ({
       id: s.styleID,
       title: s.title,
-      hasBibliography: s.hasBibliography,
-      dependsOn: s.dependsOn ?? null,
-      updated: s.updated ?? null,
     }));
 
     if (filter) {
