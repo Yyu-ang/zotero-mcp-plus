@@ -21,6 +21,7 @@ import { SmartAnnotationExtractor } from './smartAnnotationExtractor';
 import { MCPSettingsService } from './mcpSettingsService';
 import { getSemanticSearchService, SemanticSearchService } from './semantic';
 import { CitationExportService } from './citationExportService';
+import { getToolRegistry } from './toolRegistry';
 
 export interface MCPRequest {
   jsonrpc: '2.0';
@@ -1163,6 +1164,12 @@ export class StreamableMCPServer {
       ? filteredTools
       : filteredTools.filter((t: any) => !writeToolNames.has(t.name));
 
+    // Append externally-registered tools from other Zotero plugins
+    const externalTools = getToolRegistry().getToolDefinitions();
+    if (externalTools.length > 0) {
+      (finalTools as any[]).push(...externalTools);
+    }
+
     return this.createResponse(request.id ?? null, { tools: finalTools });
   }
 
@@ -1430,8 +1437,17 @@ export class StreamableMCPServer {
           result = await this.callListCitationStyles(args);
           break;
 
-        default:
+        default: {
+          // Check externally-registered tools from other Zotero plugins
+          const registry = getToolRegistry();
+          const externalTool = registry.getTool(name);
+          if (externalTool) {
+            ztoolkit.log(`[StreamableMCP] Calling external tool: ${name}`);
+            result = await externalTool.handler(args);
+            break;
+          }
           throw new Error(`Unknown tool: ${name}`);
+        }
       }
 
       // Wrap result in MCP content format with proper text type.
@@ -2906,6 +2922,7 @@ export class StreamableMCPServer {
         'write_metadata',
         'write_item'
       ],
+      externalTools: getToolRegistry().getRegisteredTools().map(t => t.name),
       transport: {
         type: "streamable-http",
         keepAliveSupported: false,
