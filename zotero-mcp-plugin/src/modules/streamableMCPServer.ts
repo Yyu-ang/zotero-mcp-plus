@@ -1097,6 +1097,11 @@ export class StreamableMCPServer {
               type: 'boolean',
               description: 'When an item already exists, also add it to the target collection. This is the only way this tool modifies existing items (default false).'
             },
+            titleDuplicates: {
+              type: 'string',
+              enum: ['flag', 'skip', 'off'],
+              description: "How to handle an imported item whose title matches an item already in the library — this catches a preprint arriving next to its published version, which identifier matching cannot see. 'flag' (default) keeps the import and reports possibleDuplicateOf; 'skip' moves the freshly imported item to the trash and reports duplicate_trashed; 'off' disables the check."
+            },
             dryRun: {
               type: 'boolean',
               description: 'Only report how Zotero parses each identifier; writes nothing (default false).'
@@ -2669,6 +2674,7 @@ export class StreamableMCPServer {
       skipExisting: args.skipExisting !== false,
       fileExisting: args.fileExisting === true,
       dryRun: args.dryRun === true,
+      titleDuplicates: args.titleDuplicates || 'flag',
       delayMs: typeof args.delayMs === 'number' ? args.delayMs : 500
     };
 
@@ -2804,13 +2810,76 @@ export class StreamableMCPServer {
     }
 
     ztoolkit.log(`[StreamableMCP] add_by_identifier imported ${newItems[0].key} for ${parsed}`);
+
+    // A preprint and its published version share no identifier, so the check
+    // above cannot see them as the same work. The title is only known after
+    // resolution, hence this second pass.
+    let duplicatesOf: any[] = [];
+    if (opts.titleDuplicates !== 'off') {
+      duplicatesOf = await this.findItemsByTitle(opts.libraryID, newItems[0]);
+    }
+
+    if (duplicatesOf.length && opts.titleDuplicates === 'skip') {
+      const imported = newItems[0];
+      imported.deleted = true; // to the trash, not erased
+      await imported.saveTx();
+      return {
+        input,
+        identifier: parsed,
+        status: 'duplicate_trashed',
+        trashedItemKey: imported.key,
+        duplicateOf: duplicatesOf,
+        item: this.summarizeIdentifierItem(imported)
+      };
+    }
+
     return {
       input,
       identifier: parsed,
       status: 'imported',
       item: this.summarizeIdentifierItem(newItems[0]),
+      ...(duplicatesOf.length ? { possibleDuplicateOf: duplicatesOf } : {}),
       extraItems: newItems.slice(1).map((i: any) => this.summarizeIdentifierItem(i))
     };
+  }
+
+  /**
+   * Find other regular items in the library whose title normalizes to the same
+   * string. Deliberately exact-after-normalization rather than fuzzy: catching
+   * "preprint vs published version" is worth it, guessing is not.
+   */
+  private async findItemsByTitle(libraryID: number, item: any): Promise<any[]> {
+    const normalize = (value: string) => String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9一-鿿]+/g, ' ')
+      .trim();
+
+    const title = item.getField('title');
+    const target = normalize(title);
+    if (target.length < 8) return [];
+
+    // Cheap candidate filter, then compare normalized titles in full: a
+    // 'contains' search cannot survive punctuation differences on its own.
+    const tokens = target.split(' ').filter((t: string) => t.length >= 5);
+    const probe = tokens.sort((a: string, b: string) => b.length - a.length)[0] || target.slice(0, 20);
+
+    try {
+      const search = new Zotero.Search();
+      (search as any).libraryID = libraryID;
+      search.addCondition('noChildren', 'true');
+      search.addCondition('title', 'contains', probe);
+      const ids = await search.search();
+      if (!ids || !ids.length) return [];
+
+      const candidates = await Zotero.Items.getAsync(ids);
+      return candidates
+        .filter((c: any) => c.id !== item.id && c.isRegularItem() && !c.deleted)
+        .filter((c: any) => normalize(c.getField('title')) === target)
+        .map((c: any) => this.summarizeIdentifierItem(c));
+    } catch (error) {
+      ztoolkit.log(`[StreamableMCP] add_by_identifier title duplicate check failed: ${error}`, 'warn');
+      return [];
+    }
   }
 
   /**
