@@ -13,6 +13,11 @@ import {
 } from "./collectionFormatter";
 import { handleSearchRequest, MCPError } from "./searchEngine";
 import { FulltextService } from "./fulltextService";
+import {
+  commitNotifierQueue,
+  createNotifierQueue,
+  notifierSaveOptions,
+} from "./deferredNotifierCommitter";
 
 declare let ztoolkit: ZToolkit;
 
@@ -1094,14 +1099,19 @@ export async function handleCreateCollection(
       collection.parentKey = body.parentCollection;
     }
 
-    await collection.saveTx();
+    const notifierQueue = createNotifierQueue();
+    await collection.saveTx(notifierSaveOptions(notifierQueue));
+    const notification = await commitNotifierQueue(notifierQueue, `create collection ${collection.key}`);
     ztoolkit.log(`[ApiHandlers] Created collection: ${collection.key} - ${collection.name}`);
 
     return {
       status: 201,
       statusText: "Created",
       headers: { "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify(formatCollectionBrief(collection)),
+      body: JSON.stringify({
+        ...formatCollectionBrief(collection),
+        notificationStatus: notification.status,
+      }),
     };
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
@@ -1203,14 +1213,19 @@ export async function handleUpdateCollection(
       }
     }
 
-    await collection.saveTx();
+    const notifierQueue = createNotifierQueue();
+    await collection.saveTx(notifierSaveOptions(notifierQueue));
+    const notification = await commitNotifierQueue(notifierQueue, `update collection ${collectionKey}`);
     ztoolkit.log(`[ApiHandlers] Updated collection: ${collection.key} - ${collection.name}`);
 
     return {
       status: 200,
       statusText: "OK",
       headers: { "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify(formatCollectionBrief(collection)),
+      body: JSON.stringify({
+        ...formatCollectionBrief(collection),
+        notificationStatus: notification.status,
+      }),
     };
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
@@ -1263,7 +1278,17 @@ export async function handleDeleteCollection(
     const numItems = collection.getChildItems(true).length;
     const numSubcollections = collection.getChildCollections(true).length;
 
-    await collection.eraseTx({ deleteItems: body.deleteItems ?? false });
+    let notificationStatus = "completed";
+    if (body.deleteItems) {
+      // Zotero does not propagate a custom notifier queue to descendant item
+      // trash operations, so keep the native synchronous path for this case.
+      await collection.eraseTx({ deleteItems: true });
+    } else {
+      const notifierQueue = createNotifierQueue();
+      await collection.eraseTx(notifierSaveOptions(notifierQueue));
+      const notification = await commitNotifierQueue(notifierQueue, `delete collection ${collectionKey}`);
+      notificationStatus = notification.status;
+    }
     ztoolkit.log(`[ApiHandlers] Deleted collection: ${collectionKey} - ${name}`);
 
     return {
@@ -1272,6 +1297,7 @@ export async function handleDeleteCollection(
       headers: { "Content-Type": "application/json; charset=utf-8" },
       body: JSON.stringify({
         success: true,
+        notificationStatus,
         deleted: {
           key: collectionKey,
           name,
@@ -1354,13 +1380,17 @@ export async function handleAddItemsToCollection(
       added.push(itemKey);
     }
 
+    let notificationStatus = "not-needed";
     if (added.length > 0) {
+      const notifierQueue = createNotifierQueue();
       const itemIDs = (await Promise.all(added.map(
         (key: string) => Zotero.Items.getByLibraryAndKeyAsync(libraryID, key),
       ))).map((item) => (item as Zotero.Item).id);
       await Zotero.DB.executeTransaction(async () => {
-        await collection.addItems(itemIDs);
+        await collection.addItems(itemIDs, notifierSaveOptions(notifierQueue));
       });
+      const notification = await commitNotifierQueue(notifierQueue, `add items to collection ${collectionKey}`);
+      notificationStatus = notification.status;
     }
 
     ztoolkit.log(
@@ -1373,6 +1403,7 @@ export async function handleAddItemsToCollection(
       headers: { "Content-Type": "application/json; charset=utf-8" },
       body: JSON.stringify({
         success: true,
+        notificationStatus,
         collectionKey,
         added,
         notFound,
@@ -1471,6 +1502,7 @@ export async function handleRemoveItemsFromCollection(
       headers: { "Content-Type": "application/json; charset=utf-8" },
       body: JSON.stringify({
         success: true,
+        notificationStatus: "completed",
         collectionKey,
         removed,
         notFound,
