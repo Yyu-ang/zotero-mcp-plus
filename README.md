@@ -273,8 +273,12 @@ Update metadata fields on items (title, abstract, date, DOI, creators, etc.).
 - `itemKey` (required), `fields`, `creators`
 
 #### `write_item`
-Create new items or reparent existing attachments.
-- `action` (required: create/reparent), `itemType`, `fields`, `creators`, `tags`, `attachmentKeys`, `parentKey`
+Create new items, reparent existing attachments, or import local files as attachments.
+- `action` (required: create/reparent/import), `itemType`, `fields`, `creators`, `tags`, `attachmentKeys`, `parentKey`, `filePath`, `parentItemKey`, `title`, `libraryID`
+
+#### `add_by_identifier`
+Import items by identifier (DOI, arXiv, ISBN, PMID, ADS bibcode) using Zotero's native resolvers — the same pipeline as the desktop "magic wand", including translator metadata and automatic attachment fetching.
+- `identifiers` (required), `libraryID`, `collectionKey`, `saveAttachments`, `duplicates`, `titleDuplicates`, `dryRun`, `async`, `jobID`
 
 ---
 

@@ -2675,7 +2675,7 @@ export class StreamableMCPServer {
     let collections: number[] | false = false;
     let collectionName: string | null = null;
     if (args.collectionKey) {
-      const collection = Zotero.Collections.getByLibraryAndKey(libraryID, args.collectionKey);
+      const collection = await Zotero.Collections.getByLibraryAndKeyAsync(libraryID, args.collectionKey);
       if (!collection) {
         throw new Error(`Collection not found in library ${libraryID}: ${args.collectionKey}`);
       }
@@ -3223,7 +3223,8 @@ export class StreamableMCPServer {
         'write_note',
         'write_tag',
         'write_metadata',
-        'write_item'
+        'write_item',
+        'add_by_identifier'
       ],
       transport: {
         type: "streamable-http",
