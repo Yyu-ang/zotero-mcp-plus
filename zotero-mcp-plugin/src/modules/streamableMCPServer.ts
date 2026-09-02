@@ -1454,7 +1454,23 @@ export class StreamableMCPServer {
     // Call the dedicated item details handler
     const response = await handleGetItem({ 1: itemKey }, queryParams);
     let result = response.body ? JSON.parse(response.body) : response;
-    
+
+    // complete mode: additionally include the item's full Zotero API JSON
+    // (dateAdded/dateModified, collections, relations, extra) so complete is
+    // a strict superset of standard instead of identical to it (#96)
+    if (effectiveMode === 'complete' && result && typeof result === 'object' && !result.error) {
+      try {
+        const resolvedLibraryID = (libraryID !== undefined && libraryID !== null)
+          ? Number(libraryID) : Zotero.Libraries.userLibraryID;
+        const item = await Zotero.Items.getByLibraryAndKeyAsync(resolvedLibraryID, itemKey);
+        if (item) {
+          result.apiJSON = item.toJSON();
+        }
+      } catch (e) {
+        ztoolkit.log(`[StreamableMCP] get_item_details complete-mode toJSON failed: ${e}`, 'warn');
+      }
+    }
+
     // Add mode information to metadata
     if (result && typeof result === 'object') {
       result.metadata = {
@@ -1463,7 +1479,7 @@ export class StreamableMCPServer {
         appliedModeConfig: this.getItemDetailsModeConfiguration(effectiveMode)
       };
     }
-    
+
     return result;
   }
 
