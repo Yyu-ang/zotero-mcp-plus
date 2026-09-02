@@ -701,7 +701,23 @@ export class SemanticSearchService {
     }
 
     // Extract content (PDF extraction happens here)
-    content = await this.extractItemContent(item, sharedProcessor);
+    const extraction = await this.extractItemContent(item, sharedProcessor);
+    content = extraction.content;
+    if (extraction.pdfExtractionFailed) {
+      // PDF extraction failed: do NOT record the title+abstract remnant as a
+      // successful index. Persist a 'failed:extraction' marker (same pattern as
+      // embedding failures at recordFailedItem) so the column UI excludes it
+      // and the Retry Failed button picks it up.
+      this._failedItems.set(item.key, {
+        error: `PDF extraction failed: ${extraction.pdfError}`,
+        errorType: 'extraction' as any,
+        timestamp: Date.now()
+      });
+      this.indexProgress.failedCount = this._failedItems.size;
+      await this.vectorStore.updateIndexStatus(item.key, 0, 'failed:extraction', itemModified, attachmentModified);
+      ztoolkit.log(`[SemanticSearch] indexItem() PDF extraction failed for ${item.key}, marked failed:extraction`, 'warn');
+      return;
+    }
     if (!content.trim()) {
       // Mark item in index_status even with no content, to prevent repeated rebuild attempts
       await this.vectorStore.updateIndexStatus(item.key, 0, 'empty', itemModified, attachmentModified);
@@ -745,7 +761,12 @@ export class SemanticSearchService {
     // Chunk the content
     const chunks = this.textChunker.chunk(content);
     if (chunks.length === 0) {
-      ztoolkit.log(`[SemanticSearch] indexItem() skip: no chunks generated`);
+      // deleteItemVectors() above removed this item's index_status row; without
+      // re-writing one the item counts as "never indexed" and every subsequent
+      // buildIndex re-extracts it (infinite rescan loop, see #104 problem 2).
+      // contentHash was computed above, so later content changes still reindex.
+      await this.vectorStore.updateIndexStatus(item.key, 0, contentHash, itemModified, attachmentModified);
+      ztoolkit.log(`[SemanticSearch] indexItem() no chunks generated for ${item.key}, wrote chunk_count=0 sentinel`);
       return;
     }
     ztoolkit.log(`[SemanticSearch] indexItem() chunked into ${chunks.length} chunks`);
@@ -1087,8 +1108,10 @@ export class SemanticSearchService {
    * @param item The Zotero item
    * @param sharedProcessor Optional shared PDFProcessor for better performance
    */
-  private async extractItemContent(item: any, sharedProcessor?: PDFProcessor | null): Promise<string> {
+  private async extractItemContent(item: any, sharedProcessor?: PDFProcessor | null): Promise<{ content: string; pdfExtractionFailed: boolean; pdfError: string }> {
     const parts: string[] = [];
+    let pdfExtractionFailed = false;
+    let pdfError = '';
     ztoolkit.log(`[SemanticSearch] extractItemContent() start: ${item.key}, type=${item.itemType}`);
 
     try {
@@ -1130,7 +1153,7 @@ export class SemanticSearchService {
                   try {
                     const textContent = await processor.extractText(filePath);
                     if (textContent && textContent.length > 0) {
-                      const maxFullTextLength = 50000;
+                      const maxFullTextLength = this.getMaxFullTextLength();
                       const finalContent = textContent.length > maxFullTextLength
                         ? textContent.substring(0, maxFullTextLength)
                         : textContent;
@@ -1151,7 +1174,9 @@ export class SemanticSearchService {
                 } else {
                   ztoolkit.log(`[SemanticSearch] extractItemContent() no file path for attachment ${attachmentId}`);
                 }
-              } catch (pdfError) {
+              } catch (e) {
+                pdfExtractionFailed = true;
+                pdfError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
                 ztoolkit.log(`[SemanticSearch] extractItemContent() PDF extraction failed: ${pdfError}`, 'warn');
               }
             }
@@ -1222,8 +1247,20 @@ export class SemanticSearchService {
     }
 
     const result = parts.join('\n\n');
-    ztoolkit.log(`[SemanticSearch] extractItemContent() done: ${parts.length} parts, total ${result.length} chars`);
-    return result;
+    ztoolkit.log(`[SemanticSearch] extractItemContent() done: ${parts.length} parts, total ${result.length} chars${pdfExtractionFailed ? ' (PDF extraction FAILED)' : ''}`);
+    return { content: result, pdfExtractionFailed, pdfError };
+  }
+
+  /** Pref: extensions.zotero.zotero-mcp-plugin.semantic.maxFullTextLength (0 = unlimited, default 50000) */
+  private getMaxFullTextLength(): number {
+    try {
+      const raw = Zotero.Prefs.get('extensions.zotero.zotero-mcp-plugin.semantic.maxFullTextLength', true);
+      const n = parseInt(String(raw), 10);
+      if (Number.isFinite(n) && n >= 0) return n === 0 ? Number.MAX_SAFE_INTEGER : n;
+    } catch {
+      // fall through to default
+    }
+    return 50000;
   }
 
   /**
