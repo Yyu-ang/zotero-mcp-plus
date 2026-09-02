@@ -103,14 +103,33 @@ export class VectorStore {
       // Create database connection
       this.db = new Zotero.DBConnection(this.dbPath);
 
+      // #95: WAL so bulk index writes don't hold exclusive locks on a
+      // multi-GB database (default rollback journal blocks readers and
+      // rewrites the journal on every commit)
+      try {
+        const mode = await this.db.valueQueryAsync(`PRAGMA journal_mode = WAL`);
+        await this.db.queryAsync(`PRAGMA synchronous = NORMAL`);
+        ztoolkit.log(`[VectorStore] journal_mode=${mode}`);
+      } catch (e) {
+        ztoolkit.log(`[VectorStore] Could not enable WAL: ${e}`, 'warn');
+      }
+
       // Create tables
       await this.createTables();
 
-      // Check database integrity
-      const isHealthy = await this.checkAndRepairDatabase();
-      if (!isHealthy) {
-        // Database was recreated after corruption, re-create tables
-        await this.createTables();
+      // Check database integrity — PRAGMA integrity_check scans the whole
+      // file even with a row limit, so on multi-GB stores run it at most
+      // once per week (#95). Corruption between checks is repaired at the
+      // next scheduled check.
+      const PREF_LAST_CHECK = 'extensions.zotero.zotero-mcp-plugin.semantic.lastIntegrityCheck';
+      const lastCheck = parseInt(String(Zotero.Prefs.get(PREF_LAST_CHECK, true) || '0'), 10);
+      if (Date.now() - lastCheck > 7 * 24 * 3600 * 1000) {
+        const isHealthy = await this.checkAndRepairDatabase();
+        if (!isHealthy) {
+          // Database was recreated after corruption, re-create tables
+          await this.createTables();
+        }
+        Zotero.Prefs.set(PREF_LAST_CHECK, String(Date.now()), true);
       }
 
       this.initialized = true;

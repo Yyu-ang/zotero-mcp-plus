@@ -17,6 +17,7 @@ let itemNotifierID: string | null = null;
 // Debounce timer for auto-update
 let autoUpdateDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const AUTO_UPDATE_DEBOUNCE_MS = 5000; // Wait 5 seconds after last change before updating
+const AUTO_UPDATE_RETRY_MS = 60000; // Re-check interval when a build is already in flight (#95)
 
 // Queue of item keys to update
 const pendingAutoUpdateKeys = new Set<string>();
@@ -87,6 +88,22 @@ async function processPendingAutoUpdates() {
     const isReady = await semanticService.isReady();
     if (!isReady) {
       ztoolkit.log("[MCP Plugin] Semantic service not ready, skipping auto-update");
+      return;
+    }
+
+    // #95: same guards as triggerAutoIndexBuild — never launch the build
+    // pipeline while another build is in flight. Re-queue the keys and
+    // retry later instead of silently dropping them.
+    // (getIndexProgress() is the in-memory copy — deliberately NOT
+    // getStats(), whose full-table scans are part of the problem.)
+    if (semanticService.isBuildActive() ||
+        semanticService.getIndexProgress().status === 'indexing') {
+      ztoolkit.log("[MCP Plugin] Build in flight, deferring auto-update");
+      for (const k of keysToUpdate) pendingAutoUpdateKeys.add(k);
+      autoUpdateDebounceTimer = trackedSetTimeout(() => {
+        autoUpdateDebounceTimer = null;
+        processPendingAutoUpdates();
+      }, AUTO_UPDATE_RETRY_MS);
       return;
     }
 
