@@ -2333,7 +2333,10 @@ export class StreamableMCPServer {
    * Handle write_metadata tool calls: update fields and creators on items
    */
   private async callWriteMetadata(args: any): Promise<any> {
-    const { itemKey, fields, creators, libraryID = Zotero.Libraries.userLibraryID } = args;
+    const { itemKey, fields, creators } = args;
+    const libraryID = args.libraryID === 0 || args.libraryID === undefined || args.libraryID === null
+      ? Zotero.Libraries.userLibraryID
+      : args.libraryID;
 
     try {
       const item = await Zotero.Items.getByLibraryAndKeyAsync(
@@ -3313,7 +3316,7 @@ export class StreamableMCPServer {
         fields: ['key', 'title', 'creators', 'date', 'itemType']
       },
       'preview': {
-        fields: ['key', 'title', 'creators', 'date', 'itemType', 'abstractNote', 'tags', 'collections']
+        fields: ['key', 'title', 'creators', 'date', 'itemType', 'abstractNote', 'extra', 'tags', 'collections']
       },
       'standard': {
         fields: null // Include most fields (default behavior)

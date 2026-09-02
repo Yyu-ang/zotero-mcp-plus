@@ -33,9 +33,10 @@ export async function formatItem(
     fieldsToExport = fields;
   } else {
     // Type-aware default: every field valid for this item's type (bookTitle,
-    // proceedingsTitle, thesisType, university, institution, ...) plus children (#96).
-    // "title" is kept explicitly: note/attachment item types have no itemData
-    // fields but their title still resolves via getField's special cases.
+    // proceedingsTitle, thesisType, university, institution, extra, ...) plus
+    // children (#96, #91). "title" is kept explicitly: note/attachment item
+    // types have no itemData fields but their title still resolves via
+    // getField's special cases.
     const typeFields = Zotero.ItemFields.getItemTypeFields(item.itemTypeID).map(
       (fieldID: number) => Zotero.ItemFields.getName(fieldID) as string,
     );
