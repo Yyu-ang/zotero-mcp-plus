@@ -795,7 +795,7 @@ export class VectorStore {
     await this.ensureInitialized();
 
     // IMPORTANT: Single-line query to avoid Zotero queryAsync bug with multi-line SQL
-    const rows = await this.db.queryAsync(`SELECT item_key FROM index_status WHERE content_hash NOT LIKE 'failed:%'`);
+    const rows = await this.db.queryAsync(`SELECT item_key FROM index_status WHERE content_hash NOT LIKE ?`, ['failed:%']);
 
     if (!rows || rows.length === 0) {
       return new Set();
@@ -811,7 +811,7 @@ export class VectorStore {
     await this.ensureInitialized();
 
     // IMPORTANT: Single-line query to avoid Zotero queryAsync bug with multi-line SQL
-    const rows = await this.db.queryAsync(`SELECT item_key FROM index_status WHERE content_hash LIKE 'failed:%'`);
+    const rows = await this.db.queryAsync(`SELECT item_key FROM index_status WHERE content_hash LIKE ?`, ['failed:%']);
 
     return rows && rows.length > 0 ? rows.map((r: any) => r.item_key) : [];
   }
@@ -824,10 +824,10 @@ export class VectorStore {
 
     if (keys && keys.length > 0) {
       for (const key of keys) {
-        await this.db.queryAsync(`DELETE FROM index_status WHERE item_key = ? AND content_hash LIKE 'failed:%'`, [key]);
+        await this.db.queryAsync(`DELETE FROM index_status WHERE item_key = ? AND content_hash LIKE ?`, [key, 'failed:%']);
       }
     } else {
-      await this.db.queryAsync(`DELETE FROM index_status WHERE content_hash LIKE 'failed:%'`);
+      await this.db.queryAsync(`DELETE FROM index_status WHERE content_hash LIKE ?`, ['failed:%']);
     }
   }
 
