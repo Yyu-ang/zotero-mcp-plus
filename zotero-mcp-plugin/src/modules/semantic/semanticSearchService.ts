@@ -1204,8 +1204,12 @@ export class SemanticSearchService {
               }
             }
 
-            // Extract text from plain text attachments
-            if (attachment.attachmentContentType === 'text/plain') {
+            // Extract text from text attachments (text/plain, text/markdown, ...
+            // but not text/html — snapshots go through the webpage path). Keeps
+            // MinerU-style imported .md files indexable (#86).
+            if (attachment.attachmentContentType &&
+                attachment.attachmentContentType.startsWith('text/') &&
+                !attachment.attachmentContentType.includes('html')) {
               try {
                 const filePath = await attachment.getFilePathAsync?.();
                 if (filePath) {
