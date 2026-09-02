@@ -6,6 +6,10 @@ import { registerPrefsScripts } from "./modules/preferenceScript";
 import { createZToolkit } from "./utils/ztoolkit";
 import { MCPSettingsService } from "./modules/mcpSettingsService";
 import { registerSemanticIndexColumn, unregisterSemanticIndexColumn, refreshSemanticColumn } from "./modules/semanticIndexColumn";
+import {
+  flushNotifierCommits,
+  flushWriteOperations,
+} from "./modules/deferredNotifierCommitter";
 
 // Preference keys for semantic search settings
 const PREF_SEMANTIC_ENABLED = 'extensions.zotero.zotero-mcp-plugin.semantic.enabled';
@@ -520,11 +524,24 @@ async function onMainWindowUnload(win: Window): Promise<void> {
   ztoolkit.unregisterAll();
 }
 
-function onShutdown(): void {
+async function onShutdown(): Promise<void> {
   ztoolkit.log("[MCP Plugin] ======== SHUTDOWN START ========");
 
   // Set shutdown flag to prevent new async operations
   isShuttingDown = true;
+
+  // Stop accepting writes, then give already-committed notifier queues a
+  // bounded chance to finish while observers are still registered.
+  try {
+    if (httpServer.isServerRunning()) {
+      httpServer.stop();
+    }
+    await flushWriteOperations();
+    await flushNotifierCommits();
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    ztoolkit.log(`[MCP Plugin] Error flushing notifier queues: ${err.message}`, "error");
+  }
 
   // Clear all pending timeouts immediately
   ztoolkit.log("[MCP Plugin] [SHUTDOWN 1/7] Clearing pending timeouts...");

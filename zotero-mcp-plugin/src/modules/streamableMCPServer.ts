@@ -20,6 +20,12 @@ import { UnifiedContentExtractor } from './unifiedContentExtractor';
 import { SmartAnnotationExtractor } from './smartAnnotationExtractor';
 import { MCPSettingsService } from './mcpSettingsService';
 import { getSemanticSearchService, SemanticSearchService } from './semantic';
+import {
+  commitNotifierQueue,
+  createNotifierQueue,
+  notifierSaveOptions,
+  runSerializedWrite,
+} from './deferredNotifierCommitter';
 
 export interface MCPRequest {
   jsonrpc: '2.0';
@@ -1230,7 +1236,7 @@ export class StreamableMCPServer {
           if (!args?.name) {
             throw new Error('name is required');
           }
-          result = await this.callCreateCollection(args);
+          result = await runSerializedWrite(() => this.callCreateCollection(args));
           break;
         }
 
@@ -1242,7 +1248,7 @@ export class StreamableMCPServer {
           if (!args?.collectionKey) {
             throw new Error('collectionKey is required');
           }
-          result = await this.callUpdateCollection(args);
+          result = await runSerializedWrite(() => this.callUpdateCollection(args));
           break;
         }
 
@@ -1254,7 +1260,7 @@ export class StreamableMCPServer {
           if (!args?.collectionKey) {
             throw new Error('collectionKey is required');
           }
-          result = await this.callDeleteCollection(args);
+          result = await runSerializedWrite(() => this.callDeleteCollection(args));
           break;
         }
 
@@ -1270,7 +1276,7 @@ export class StreamableMCPServer {
           if (!addKeys || addKeys.length === 0) {
             throw new Error(`itemKeys array is required, e.g. ["ABCD1234"]. Received: ${JSON.stringify(args?.itemKeys)}`);
           }
-          result = await this.callAddItemsToCollection({ ...args, itemKeys: addKeys });
+          result = await runSerializedWrite(() => this.callAddItemsToCollection({ ...args, itemKeys: addKeys }));
           break;
         }
 
@@ -1286,7 +1292,7 @@ export class StreamableMCPServer {
           if (!removeKeys || removeKeys.length === 0) {
             throw new Error(`itemKeys array is required, e.g. ["ABCD1234"]. Received: ${JSON.stringify(args?.itemKeys)}`);
           }
-          result = await this.callRemoveItemsFromCollection({ ...args, itemKeys: removeKeys });
+          result = await runSerializedWrite(() => this.callRemoveItemsFromCollection({ ...args, itemKeys: removeKeys }));
           break;
         }
 
@@ -1340,7 +1346,7 @@ export class StreamableMCPServer {
           if (!args?.action || !args?.content) {
             throw new Error('action and content are required');
           }
-          result = await this.callWriteNote(args);
+          result = await runSerializedWrite(() => this.callWriteNote(args));
           break;
         }
 
@@ -1352,7 +1358,7 @@ export class StreamableMCPServer {
           if (!args?.action || !args?.itemKey || !args?.tags) {
             throw new Error('action, itemKey, and tags are required');
           }
-          result = await this.callWriteTag(args);
+          result = await runSerializedWrite(() => this.callWriteTag(args));
           break;
         }
 
@@ -1367,7 +1373,7 @@ export class StreamableMCPServer {
           if (!args?.fields && !args?.creators) {
             throw new Error('At least one of fields or creators is required');
           }
-          result = await this.callWriteMetadata(args);
+          result = await runSerializedWrite(() => this.callWriteMetadata(args));
           break;
         }
 
@@ -1379,7 +1385,7 @@ export class StreamableMCPServer {
           if (!args?.action) {
             throw new Error('action is required');
           }
-          result = await this.callWriteItem(args);
+          result = await runSerializedWrite(() => this.callWriteItem(args));
           break;
         }
 
@@ -2127,7 +2133,9 @@ export class StreamableMCPServer {
             }
           }
 
-          await note.saveTx();
+          const notifierQueue = createNotifierQueue();
+          await note.saveTx(notifierSaveOptions(notifierQueue));
+          const notification = await commitNotifierQueue(notifierQueue, `create note ${note.key}`);
 
           ztoolkit.log(`[StreamableMCP] Created note ${note.key}${parentKey ? ' attached to ' + parentKey : ' (standalone)'}`);
 
@@ -2145,6 +2153,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `Note created successfully (key: ${note.key})`
             }
           };
@@ -2173,7 +2182,9 @@ export class StreamableMCPServer {
             }
           }
 
-          await existingNote.saveTx();
+          const notifierQueue = createNotifierQueue();
+          await existingNote.saveTx(notifierSaveOptions(notifierQueue));
+          const notification = await commitNotifierQueue(notifierQueue, `update note ${noteKey}`);
 
           ztoolkit.log(`[StreamableMCP] Updated note ${noteKey}`);
 
@@ -2189,6 +2200,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `Note ${noteKey} updated successfully`
             }
           };
@@ -2219,7 +2231,9 @@ export class StreamableMCPServer {
             }
           }
 
-          await existingNote.saveTx();
+          const notifierQueue = createNotifierQueue();
+          await existingNote.saveTx(notifierSaveOptions(notifierQueue));
+          const notification = await commitNotifierQueue(notifierQueue, `append note ${noteKey}`);
 
           ztoolkit.log(`[StreamableMCP] Appended to note ${noteKey}`);
 
@@ -2236,6 +2250,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `Content appended to note ${noteKey} successfully`
             }
           };
@@ -2300,7 +2315,9 @@ export class StreamableMCPServer {
           throw new Error(`Unknown action: ${action}. Use add, remove, or set.`);
       }
 
-      await item.saveTx();
+      const notifierQueue = createNotifierQueue();
+      await item.saveTx(notifierSaveOptions(notifierQueue));
+      const notification = await commitNotifierQueue(notifierQueue, `write tags on ${itemKey}`);
 
       const afterTags = item.getTags().map((t: any) => t.tag);
 
@@ -2317,6 +2334,7 @@ export class StreamableMCPServer {
         },
         metadata: {
           extractedAt: new Date().toISOString(),
+          notificationStatus: notification.status,
           message: `Tags ${action === 'add' ? 'added to' : action === 'remove' ? 'removed from' : 'set on'} item ${itemKey}`
         }
       };
@@ -2393,7 +2411,9 @@ export class StreamableMCPServer {
         afterCreators = creators;
       }
 
-      await item.saveTx();
+      const notifierQueue = createNotifierQueue();
+      await item.saveTx(notifierSaveOptions(notifierQueue));
+      const notification = await commitNotifierQueue(notifierQueue, `update metadata on ${itemKey}`);
 
       ztoolkit.log(`[StreamableMCP] Updated metadata on ${itemKey}: fields=[${Object.keys(updatedFields).join(', ')}], creators=${creatorsUpdated}`);
 
@@ -2407,6 +2427,7 @@ export class StreamableMCPServer {
         },
         metadata: {
           extractedAt: new Date().toISOString(),
+          notificationStatus: notification.status,
           message: `Metadata updated on item ${itemKey}`
         }
       };
@@ -2468,31 +2489,42 @@ export class StreamableMCPServer {
             }
           }
 
-          await item.saveTx();
-
-          ztoolkit.log(`[StreamableMCP] Created item ${item.key} (type: ${itemType})`);
-
-          // Re-parent attachments if provided
+          const notifierQueue = createNotifierQueue();
           const reparentedAttachments: string[] = [];
-          if (attachmentKeys && Array.isArray(attachmentKeys)) {
-            for (const attKey of attachmentKeys) {
-              const attachment = await Zotero.Items.getByLibraryAndKeyAsync(
-                libraryID, attKey
-              );
-              if (!attachment) {
-                ztoolkit.log(`[StreamableMCP] Attachment not found in library ${libraryID}: ${attKey}`, 'warn');
-                continue;
+          let writeFailed = false;
+          let writeError: unknown;
+
+          try {
+            await item.saveTx(notifierSaveOptions(notifierQueue));
+            ztoolkit.log(`[StreamableMCP] Created item ${item.key} (type: ${itemType})`);
+
+            // Re-parent attachments if provided
+            if (attachmentKeys && Array.isArray(attachmentKeys)) {
+              for (const attKey of attachmentKeys) {
+                const attachment = await Zotero.Items.getByLibraryAndKeyAsync(
+                  libraryID, attKey
+                );
+                if (!attachment) {
+                  ztoolkit.log(`[StreamableMCP] Attachment not found in library ${libraryID}: ${attKey}`, 'warn');
+                  continue;
+                }
+                if (!attachment.isAttachment()) {
+                  ztoolkit.log(`[StreamableMCP] Item ${attKey} is not an attachment (type: ${attachment.itemType}), skipping`, 'warn');
+                  continue;
+                }
+                attachment.parentKey = item.key;
+                await attachment.saveTx(notifierSaveOptions(notifierQueue));
+                reparentedAttachments.push(attKey);
+                ztoolkit.log(`[StreamableMCP] Re-parented attachment ${attKey} under ${item.key}`);
               }
-              if (!attachment.isAttachment()) {
-                ztoolkit.log(`[StreamableMCP] Item ${attKey} is not an attachment (type: ${attachment.itemType}), skipping`, 'warn');
-                continue;
-              }
-              attachment.parentKey = item.key;
-              await attachment.saveTx();
-              reparentedAttachments.push(attKey);
-              ztoolkit.log(`[StreamableMCP] Re-parented attachment ${attKey} under ${item.key}`);
             }
+          } catch (error) {
+            writeFailed = true;
+            writeError = error;
           }
+
+          const notification = await commitNotifierQueue(notifierQueue, `create item ${item.key}`);
+          if (writeFailed) throw writeError;
 
           return {
             action: 'create',
@@ -2508,6 +2540,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `Item created (key: ${item.key}, type: ${itemType})${reparentedAttachments.length > 0 ? `, ${reparentedAttachments.length} attachment(s) attached` : ''}`
             }
           };
@@ -2533,6 +2566,7 @@ export class StreamableMCPServer {
           }
 
           const results: Array<{ key: string; success: boolean; error?: string }> = [];
+          const notifierQueue = createNotifierQueue();
           for (const attKey of attachmentKeys) {
             try {
               const attachment = await Zotero.Items.getByLibraryAndKeyAsync(
@@ -2547,7 +2581,7 @@ export class StreamableMCPServer {
                 continue;
               }
               attachment.parentKey = parentKey;
-              await attachment.saveTx();
+              await attachment.saveTx(notifierSaveOptions(notifierQueue));
               results.push({ key: attKey, success: true });
               ztoolkit.log(`[StreamableMCP] Re-parented ${attKey} under ${parentKey}`);
             } catch (attError) {
@@ -2555,6 +2589,7 @@ export class StreamableMCPServer {
             }
           }
 
+          const notification = await commitNotifierQueue(notifierQueue, `reparent items under ${parentKey}`);
           const successCount = results.filter(r => r.success).length;
 
           return {
@@ -2568,6 +2603,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `Re-parented ${successCount}/${attachmentKeys.length} item(s) under ${parentKey}`
             }
           };
@@ -2597,11 +2633,14 @@ export class StreamableMCPServer {
           }
 
           // Import file as attachment
+          const notifierQueue = createNotifierQueue();
           const attachment = await Zotero.Attachments.importFromFile({
             file: filePath,
             parentItemID: parentItem.id,
-            title: title || filePath.split(/[\\/]/).pop() || 'Imported Attachment'
+            title: title || filePath.split(/[\\/]/).pop() || 'Imported Attachment',
+            saveOptions: notifierSaveOptions(notifierQueue)
           });
+          const notification = await commitNotifierQueue(notifierQueue, `import attachment ${attachment.key}`);
 
           ztoolkit.log(`[StreamableMCP] Imported file as attachment ${attachment.key} under ${importParentKey}`);
 
@@ -2616,6 +2655,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `File imported as attachment (key: ${attachment.key}) under parent ${importParentKey}`
             }
           };
