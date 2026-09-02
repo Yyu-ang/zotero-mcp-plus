@@ -194,6 +194,10 @@ export async function handleGetItem(
       };
     }
 
+    // #105: item data is loaded lazily per library — load explicitly so
+    // feed/group libraries not opened this session don't return empty fields
+    await Zotero.Items.loadDataTypes([item]);
+
     const fieldsParam = query.get("fields");
     const fields = fieldsParam ? fieldsParam.split(",") : undefined;
     const formattedItem = await formatItem(item, fields);
