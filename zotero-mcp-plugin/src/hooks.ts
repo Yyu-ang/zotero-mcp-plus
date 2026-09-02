@@ -227,6 +227,10 @@ function registerItemNotifier() {
           // Only index regular items (not attachments, notes, etc.)
           if (item.isRegularItem?.()) {
             scheduleAutoUpdate(item.key);
+          } else if (item.isAttachment?.() && item.parentItemKey) {
+            // #100: a PDF attached after its parent was indexed must mark
+            // the parent dirty — the parent's dateModified doesn't change
+            scheduleAutoUpdate(item.parentItemKey);
           }
         }
       } else if (event === 'delete') {

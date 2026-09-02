@@ -806,6 +806,25 @@ export class VectorStore {
   }
 
   /**
+   * Bulk-load index_status change-detection fields for incremental build
+   * selection (#100)
+   */
+  async getIndexStatusMap(): Promise<Map<string, { contentHash: string; itemModified: string | null; attachmentModified: string | null }>> {
+    await this.ensureInitialized();
+
+    // IMPORTANT: Single-line query to avoid Zotero queryAsync bug with multi-line SQL
+    const rows = await this.db.queryAsync(`SELECT item_key, content_hash, item_modified, attachment_modified FROM index_status`);
+
+    const map = new Map<string, { contentHash: string; itemModified: string | null; attachmentModified: string | null }>();
+    if (rows && rows.length > 0) {
+      for (const r of rows) {
+        map.set(r.item_key, { contentHash: r.content_hash, itemModified: r.item_modified, attachmentModified: r.attachment_modified });
+      }
+    }
+    return map;
+  }
+
+  /**
    * Get item keys that were actually indexed (excludes 'failed:<type>'
    * markers) — for UI display, unlike getIndexedItems which the build
    * filter uses to skip both indexed and known-failed items

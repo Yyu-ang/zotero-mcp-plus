@@ -412,11 +412,34 @@ export class SemanticSearchService {
       const totalLibraryItems = items.length;
       ztoolkit.log(`[SemanticSearch] Library items fetched: ${totalLibraryItems}`);
 
-      // Filter already indexed items (unless rebuild)
+      // Filter already indexed items (unless rebuild). #100: an item that
+      // was indexed before its PDF arrived must be re-selected, so compare
+      // stored change-detection timestamps instead of bare membership.
       if (!rebuild) {
-        const indexedItems = await this.vectorStore.getIndexedItems();
-        const indexedCount = indexedItems.size;
-        items = items.filter(item => !indexedItems.has(item.key));
+        const statusMap = await this.vectorStore.getIndexStatusMap();
+        const indexedCount = statusMap.size;
+        const toIndex: any[] = [];
+        for (const item of items) {
+          const st = statusMap.get(item.key);
+          if (!st) { toIndex.push(item); continue; }
+          // Known-failed items stay excluded until Retry Failed clears them
+          if (st.contentHash && st.contentHash.startsWith('failed:')) continue;
+          const current = await this.getItemTimestamps(item);
+          // NULL and '' both mean "no attachment seen at index time" — do
+          // NOT reuse needsReindexByTimestamp here, its !attachmentModified
+          // rule would re-select every attachment-less item forever
+          if ((st.itemModified || '') !== current.itemModified ||
+              (st.attachmentModified || '') !== current.attachmentModified) {
+            // Invalidate the cached content: it predates the change (e.g.
+            // abstract-only, cached before the PDF existed) and its hash
+            // matches the stored index hash, so the cached-content
+            // short-circuit in indexItemWithProcessor would otherwise just
+            // refresh timestamps and never re-extract
+            await this.vectorStore.deleteCachedContent(item.key);
+            toIndex.push(item);
+          }
+        }
+        items = toIndex;
         ztoolkit.log(`[SemanticSearch] Items: library=${totalLibraryItems}, indexed=${indexedCount}, toIndex=${items.length}`);
       } else {
         // For rebuild: clear all existing index data first
@@ -1320,6 +1343,30 @@ export class SemanticSearchService {
       }
     }
     return items;
+  }
+
+  /**
+   * Current change-detection timestamps for an item (#100): its own
+   * dateModified plus the newest attachment dateModified ('' when the
+   * item has no attachments)
+   */
+  private async getItemTimestamps(item: any): Promise<{ itemModified: string; attachmentModified: string }> {
+    const itemModified = item.dateModified || '';
+    let attachmentModified = '';
+    if (item.isRegularItem?.()) {
+      const attachmentIds = item.getAttachments?.() || [];
+      for (const attId of attachmentIds) {
+        try {
+          const att = await Zotero.Items.getAsync(attId);
+          if (att?.dateModified && att.dateModified > attachmentModified) {
+            attachmentModified = att.dateModified;
+          }
+        } catch (e) {
+          // Skip failed attachments
+        }
+      }
+    }
+    return { itemModified, attachmentModified };
   }
 
   /**
