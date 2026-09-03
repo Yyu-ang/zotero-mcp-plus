@@ -702,6 +702,9 @@ function bindEmbeddingSettings(doc: Document) {
           const tagsUrl = `${ollamaBase}/api/tags`;
           ztoolkit.log(`[PreferenceScript] Testing Ollama native API: ${tagsUrl}`);
           const tagsResp = await Zotero.HTTP.request('GET', tagsUrl, {
+            headers: {
+              ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {})
+            },
             timeout: Math.min(timeoutMilliseconds, 10000),
             responseType: 'json',
             successCodes: false
