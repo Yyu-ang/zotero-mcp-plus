@@ -1067,6 +1067,11 @@ export class StreamableMCPServer {
             title: {
               type: 'string',
               description: 'For import action: display title for the attachment (defaults to the file name)'
+            },
+            linkMode: {
+              type: 'string',
+              enum: ['imported_file', 'linked_file'],
+              description: 'For import action: imported_file (default) copies the file into Zotero storage; linked_file links to the file in place without copying (personal library only; if a Linked Attachment Base Directory is configured, the path is stored relative to it)'
             }
           },
           required: ['action']
@@ -2444,7 +2449,7 @@ export class StreamableMCPServer {
    * Handle write_item tool calls: create items, reparent attachments, and import files
    */
   private async callWriteItem(args: any): Promise<any> {
-    const { action, itemType, fields, creators, tags, attachmentKeys, parentKey, filePath, parentItemKey, title, libraryID = Zotero.Libraries.userLibraryID } = args;
+    const { action, itemType, fields, creators, tags, attachmentKeys, parentKey, filePath, parentItemKey, title, linkMode, libraryID = Zotero.Libraries.userLibraryID } = args;
 
     try {
       switch (action) {
@@ -2632,17 +2637,31 @@ export class StreamableMCPServer {
             throw new Error(`Parent ${importParentKey} is not a regular item (type: ${parentItem.itemType}), cannot attach files`);
           }
 
-          // Import file as attachment
+          const effectiveLinkMode = linkMode || 'imported_file';
+          if (effectiveLinkMode !== 'imported_file' && effectiveLinkMode !== 'linked_file') {
+            throw new Error(`Invalid linkMode: ${linkMode}. Use imported_file (copy into Zotero storage) or linked_file (link in place).`);
+          }
+          if (effectiveLinkMode === 'linked_file' && parentItem.libraryID !== Zotero.Libraries.userLibraryID) {
+            // Zotero core rejects linked files outside the personal library;
+            // check the resolved parent's library, matching core's constraint
+            throw new Error('linked_file attachments are only supported in the personal library (Zotero limitation); use imported_file for group libraries');
+          }
+
+          // Import or link file as attachment (#93: linked_file keeps the
+          // file in place instead of copying it into Zotero storage)
           const notifierQueue = createNotifierQueue();
-          const attachment = await Zotero.Attachments.importFromFile({
+          const attachmentOptions = {
             file: filePath,
             parentItemID: parentItem.id,
             title: title || filePath.split(/[\\/]/).pop() || 'Imported Attachment',
             saveOptions: notifierSaveOptions(notifierQueue)
-          });
+          };
+          const attachment = effectiveLinkMode === 'linked_file'
+            ? await Zotero.Attachments.linkFromFile(attachmentOptions)
+            : await Zotero.Attachments.importFromFile(attachmentOptions);
           const notification = await commitNotifierQueue(notifierQueue, `import attachment ${attachment.key}`);
 
-          ztoolkit.log(`[StreamableMCP] Imported file as attachment ${attachment.key} under ${importParentKey}`);
+          ztoolkit.log(`[StreamableMCP] ${effectiveLinkMode === 'linked_file' ? 'Linked' : 'Imported'} file as attachment ${attachment.key} under ${importParentKey}`);
 
           return {
             action: 'import',
@@ -2651,12 +2670,13 @@ export class StreamableMCPServer {
               attachmentKey: attachment.key,
               parentItemKey: importParentKey,
               filePath,
+              linkMode: effectiveLinkMode,
               title: attachment.getField('title')
             },
             metadata: {
               extractedAt: new Date().toISOString(),
               notificationStatus: notification.status,
-              message: `File imported as attachment (key: ${attachment.key}) under parent ${importParentKey}`
+              message: `File ${effectiveLinkMode === 'linked_file' ? 'linked' : 'imported'} as attachment (key: ${attachment.key}) under parent ${importParentKey}`
             }
           };
         }

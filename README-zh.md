@@ -466,6 +466,7 @@ MCP 服务器已集成在插件内，位于 `src/modules/streamableMCPServer.ts`
 | `filePath` | string | import 操作：要导入文件的本地绝对路径 |
 | `parentItemKey` | string | import 操作：目标父条目 Key |
 | `title` | string | import 操作：附件显示标题（默认为文件名） |
+| `linkMode` | string | import 操作：`imported_file`（默认，复制进 Zotero 存储）或 `linked_file`（链接原文件不复制；仅限个人文库，若设置了链接附件根目录则按相对路径存储） |
 
 #### `add_by_identifier`
 通过标识符导入文献（DOI、arXiv、ISBN、PMID、ADS bibcode），走 Zotero 原生解析管线（与桌面端"魔杖"相同），自动获取 translator 元数据和附件。
