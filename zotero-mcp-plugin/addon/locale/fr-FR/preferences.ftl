@@ -223,6 +223,8 @@ first-install-later = Configurer plus tard
 
 pref-write-enable-text = Activer les operations d'ecriture
 pref-write-enable-sub = Permettre aux clients IA de creer et modifier des notes (desactive par defaut par securite)
+pref-external-tools-enable-text = Activer les outils de plugins externes
+pref-external-tools-enable-sub = Exposer à MCP les outils enregistrés par d’autres plugins Zotero (désactivé par défaut)
 
 pref-contact-title = Informations de contact
 pref-contact-email = Email : fransjone@mail.com

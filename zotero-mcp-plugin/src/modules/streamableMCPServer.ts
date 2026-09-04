@@ -20,6 +20,9 @@ import { UnifiedContentExtractor } from './unifiedContentExtractor';
 import { SmartAnnotationExtractor } from './smartAnnotationExtractor';
 import { MCPSettingsService } from './mcpSettingsService';
 import { getSemanticSearchService, SemanticSearchService } from './semantic';
+import { getToolRegistry } from './toolRegistry';
+
+const EXTERNAL_TOOLS_PREF = 'extensions.zotero.zotero-mcp-plugin.externalTools.enabled';
 import {
   commitNotifierQueue,
   createNotifierQueue,
@@ -1150,7 +1153,12 @@ export class StreamableMCPServer {
       ? filteredTools
       : filteredTools.filter((t: any) => !writeToolNames.has(t.name));
 
-    return this.createResponse(request.id ?? null, { tools: finalTools });
+    const externalToolsEnabled = Zotero.Prefs.get(EXTERNAL_TOOLS_PREF, true);
+    const exposedTools = externalToolsEnabled === true
+      ? [...finalTools, ...getToolRegistry().getToolDefinitions()]
+      : finalTools;
+
+    return this.createResponse(request.id ?? null, { tools: exposedTools });
   }
 
   private async handleToolCall(request: MCPRequest): Promise<MCPResponse> {
@@ -1411,8 +1419,20 @@ export class StreamableMCPServer {
           break;
         }
 
-        default:
+        default: {
+          const registry = getToolRegistry();
+          if (registry.hasTool(name)) {
+            const externalToolsEnabled = Zotero.Prefs.get(EXTERNAL_TOOLS_PREF, true);
+            if (externalToolsEnabled !== true) {
+              throw new Error(
+                'External plugin tools are disabled. Enable them in Zotero MCP Plugin preferences before calling registered tools.',
+              );
+            }
+            result = await registry.invoke(name, args);
+            break;
+          }
           throw new Error(`Unknown tool: ${name}`);
+        }
       }
 
       // Wrap result in MCP content format with proper text type.

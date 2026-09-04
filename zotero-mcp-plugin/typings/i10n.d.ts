@@ -126,6 +126,8 @@ export type FluentMessageId =
   | 'pref-embedding-title'
   | 'pref-enable-compression-label'
   | 'pref-enable-compression-text'
+  | 'pref-external-tools-enable-sub'
+  | 'pref-external-tools-enable-text'
   | 'pref-generate-config-button'
   | 'pref-generate-config-button-text'
   | 'pref-help'
