@@ -26,6 +26,7 @@ import {
   notifierSaveOptions,
   runSerializedWrite,
 } from './deferredNotifierCommitter';
+import { CitationExportService } from './citationExportService';
 
 export interface MCPRequest {
   jsonrpc: '2.0';
@@ -1131,6 +1132,76 @@ export class StreamableMCPServer {
             }
           }
         }
+      },
+      {
+        name: 'export_bibliography',
+        description: 'Export one or more Zotero items as BibLaTeX/BibTeX (or CSL-JSON/CSL-YAML) entries using Better BibTeX. Requires Better BibTeX to be installed and running.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            libraryID: {
+              type: 'number',
+              description: 'Optional target Zotero library ID. Defaults to the user library when omitted.'
+            },
+            itemKeys: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Item keys to export, e.g. ["ABCD1234","EFGH5678"]'
+            },
+            format: {
+              type: 'string',
+              enum: ['biblatex', 'bibtex', 'csljson', 'cslyaml'],
+              description: 'Export format. Defaults to biblatex.'
+            }
+          },
+          required: ['itemKeys']
+        }
+      },
+      {
+        name: 'get_citation',
+        description: 'Generate a formatted bibliography entry or in-text citation using a CSL style. If style is omitted, uses the Zotero default Quick Copy style. Uses Zotero native citeproc and does not require Better BibTeX.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            libraryID: {
+              type: 'number',
+              description: 'Optional target Zotero library ID. Defaults to the user library when omitted.'
+            },
+            itemKeys: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Item keys to cite, e.g. ["ABCD1234"]'
+            },
+            style: {
+              type: 'string',
+              description: 'Optional CSL style ID or title, e.g. "apa", "ieee", or a full Zotero style URL.'
+            },
+            contentType: {
+              type: 'string',
+              enum: ['html', 'text'],
+              description: 'Output content type. Defaults to html.'
+            },
+            mode: {
+              type: 'string',
+              enum: ['bibliography', 'citation'],
+              description: 'bibliography for full references or citation for in-text citations. Defaults to bibliography.'
+            }
+          },
+          required: ['itemKeys']
+        }
+      },
+      {
+        name: 'list_citation_styles',
+        description: 'List CSL citation styles available in Zotero for use with get_citation. Supports optional keyword filtering.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filter: {
+              type: 'string',
+              description: 'Optional case-insensitive keyword to filter styles by title or ID.'
+            }
+          }
+        }
       }
     ];
 
@@ -1410,6 +1481,38 @@ export class StreamableMCPServer {
           result = await this.callAddByIdentifier(args);
           break;
         }
+
+        case 'export_bibliography': {
+          const exportKeys = this.coerceStringArray(args?.itemKeys);
+          if (!exportKeys || exportKeys.length === 0) {
+            throw new Error(
+              `itemKeys array is required, e.g. ["ABCD1234"]. Received: ${JSON.stringify(args?.itemKeys)}`,
+            );
+          }
+          result = await this.callExportBibliography({
+            ...args,
+            itemKeys: exportKeys,
+          });
+          break;
+        }
+
+        case 'get_citation': {
+          const citationKeys = this.coerceStringArray(args?.itemKeys);
+          if (!citationKeys || citationKeys.length === 0) {
+            throw new Error(
+              `itemKeys array is required, e.g. ["ABCD1234"]. Received: ${JSON.stringify(args?.itemKeys)}`,
+            );
+          }
+          result = await this.callGetCitation({
+            ...args,
+            itemKeys: citationKeys,
+          });
+          break;
+        }
+
+        case 'list_citation_styles':
+          result = await this.callListCitationStyles(args);
+          break;
 
         default:
           throw new Error(`Unknown tool: ${name}`);
@@ -1801,6 +1904,39 @@ export class StreamableMCPServer {
     }
     const result = response.body ? JSON.parse(response.body) : response;
     return result;
+  }
+
+  // ============ Citation & Bibliography Export Methods ============
+
+  private citationExportService: CitationExportService | null = null;
+
+  private getCitationExportService(): CitationExportService {
+    if (!this.citationExportService) {
+      this.citationExportService = new CitationExportService();
+    }
+    return this.citationExportService;
+  }
+
+  private async callExportBibliography(args: any): Promise<any> {
+    return this.getCitationExportService().exportBibliography({
+      itemKeys: args.itemKeys,
+      format: args.format,
+      libraryID: args.libraryID,
+    });
+  }
+
+  private async callGetCitation(args: any): Promise<any> {
+    return this.getCitationExportService().getCitation({
+      itemKeys: args.itemKeys,
+      style: args.style,
+      contentType: args.contentType,
+      mode: args.mode,
+      libraryID: args.libraryID,
+    });
+  }
+
+  private async callListCitationStyles(args: any): Promise<any> {
+    return this.getCitationExportService().listStyles(args?.filter);
   }
 
   // ============ Semantic Search Methods ============
@@ -3276,6 +3412,10 @@ export class StreamableMCPServer {
         'get_collection_items',
         'search_fulltext',
         'get_item_abstract',
+        // Citation & bibliography export tools (read-only)
+        'export_bibliography',
+        'get_citation',
+        'list_citation_styles',
         // Semantic Search Tools (read-only)
         'semantic_search',
         'find_similar',
