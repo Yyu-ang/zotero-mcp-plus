@@ -1642,8 +1642,15 @@ function bindSemanticStatsSettings(doc: Document) {
           }
         }
 
-        // Log progress periodically (every 5 seconds) for debugging
-        if (progress.processed % 5 === 0 && progress.processed > 0) {
+        // Stop polling once the build reaches a terminal state.
+        if (progress.status === 'completed' || progress.status === 'aborted') {
+          ztoolkit.log(`[PreferenceScript] Progress update: ${progress.processed}/${progress.total} (${progress.status})`);
+          stopProgressUpdates();
+          return;
+        }
+
+        // Log every 5 processed items only while indexing.
+        if (progress.status === 'indexing' && progress.processed % 5 === 0 && progress.processed > 0) {
           ztoolkit.log(`[PreferenceScript] Progress update: ${progress.processed}/${progress.total} (${progress.status})`);
         }
       } catch (error) {

@@ -252,8 +252,6 @@ export class HttpServer {
       // Track this transport for cleanup on shutdown
       this.activeTransports.add(transport);
 
-      ztoolkit.log(`[HttpServer] New connection accepted from transport: ${transport.host || 'unknown'}:${transport.port || 'unknown'}`);
-
       try {
         input = transport.openInputStream(0, 0, 0);
         output = transport.openOutputStream(0, 0, 0);
@@ -295,10 +293,6 @@ export class HttpServer {
             "warn",
           );
         }
-
-        ztoolkit.log(
-          `[HttpServer] Total bytes read: ${totalBytesRead}, header bytes: ${getByteLength(headerText)}, body bytes: ${contentLength}`,
-        );
 
         // Handle empty connections (likely health checks or probes)
         if (totalBytesRead === 0 && headerText.length === 0) {
@@ -342,9 +336,7 @@ export class HttpServer {
         }
 
         const requestLine = headerText.split("\r\n")[0];
-        ztoolkit.log(
-          `[HttpServer] Received request: ${requestLine} (${totalBytesRead} bytes)`,
-        );
+        ztoolkit.log(`[HttpServer] ${requestLine}`);
 
         // 验证请求格式
         if (!requestLine || !requestLine.includes("HTTP/")) {
@@ -398,7 +390,6 @@ export class HttpServer {
             if (mcpSessionHeader && mcpSessionHeader[1]) {
               sessionId = mcpSessionHeader[1].trim();
               this.updateSessionActivity(sessionId);
-              ztoolkit.log(`[HttpServer] Using existing MCP session: ${sessionId}`);
             } else {
               sessionId = this.generateSessionId();
               this.activeSessions.set(sessionId, {
@@ -411,7 +402,6 @@ export class HttpServer {
 
           // Determine if connection should be kept alive
           const keepAlive = this.shouldKeepAlive(headerText, path);
-          ztoolkit.log(`[HttpServer] Keep-alive for ${path}: ${keepAlive}`);
 
           let result;
 
@@ -533,7 +523,7 @@ export class HttpServer {
             `Content-Length: ${byteLength}\r\n` +
             "\r\n";
 
-          ztoolkit.log(`[HttpServer] Sending response: ${byteLength} bytes (chars: ${body.length})`);
+          ztoolkit.log(`[HttpServer] Response: ${result.status} ${byteLength}B`);
 
           // Write headers (ASCII only, so length is safe)
           output.write(finalHeaders, finalHeaders.length);
@@ -605,7 +595,6 @@ export class HttpServer {
         try {
           if (output) {
             output.close();
-            ztoolkit.log(`[HttpServer] Output stream closed`);
           }
         } catch (e) {
           ztoolkit.log(
@@ -617,7 +606,6 @@ export class HttpServer {
         try {
           if (input) {
             input.close();
-            ztoolkit.log(`[HttpServer] Input stream closed`);
           }
         } catch (e) {
           ztoolkit.log(
