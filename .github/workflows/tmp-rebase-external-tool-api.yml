@@ -17,17 +17,19 @@ jobs:
           ref: pr92-external-tool-api-rebased
           fetch-depth: 0
 
-      - name: Inspect rebased conflict result
+      - name: Reapply external tool API commit
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin pr92-external-tool-api
+
           set +e
           git cherry-pick 9015cd9faa4a55f1a732a78010b298e602e0f811
           rc=$?
           set -e
+
           if [ "$rc" -ne 0 ]; then
             conflicts="$(git diff --name-only --diff-filter=U)"
             while IFS= read -r f; do
@@ -41,11 +43,38 @@ jobs:
             done <<< "$conflicts"
             GIT_EDITOR=true git cherry-pick --continue
           fi
-          echo '--- default lines ---'
-          grep -n '^[[:space:]]*default:' zotero-mcp-plugin/src/modules/streamableMCPServer.ts || true
-          echo '--- registry context ---'
-          line=$(grep -n 'const registry = getToolRegistry' zotero-mcp-plugin/src/modules/streamableMCPServer.ts | head -1 | cut -d: -f1)
-          start=$((line-35)); if [ "$start" -lt 1 ]; then start=1; fi
-          end=$((line+45))
-          nl -ba zotero-mcp-plugin/src/modules/streamableMCPServer.ts | sed -n "${start},${end}p"
-          exit 1
+
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('zotero-mcp-plugin/src/modules/streamableMCPServer.ts')
+          s = p.read_text()
+          old = "        default:\n        default: {\n"
+          if s.count(old) != 1:
+              raise SystemExit(f'expected exactly one adjacent duplicate default, found {s.count(old)}')
+          s = s.replace(old, "        default: {\n", 1)
+          p.write_text(s)
+          PY
+          git add zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          git commit --amend --no-edit
+
+      - name: Validate build
+        working-directory: zotero-mcp-plugin
+        run: |
+          npm ci
+          npm run build
+
+      - name: Validate diff
+        shell: bash
+        run: |
+          git diff d97cae2b8f823987596b151849d7abdd020a4cd9..HEAD --check
+          test "$(git rev-list --count d97cae2b8f823987596b151849d7abdd020a4cd9..HEAD)" = "1"
+          test "$(git diff --name-only d97cae2b8f823987596b151849d7abdd020a4cd9..HEAD | wc -l)" = "14"
+          echo "Changed files:"
+          git diff --name-only d97cae2b8f823987596b151849d7abdd020a4cd9..HEAD
+          echo "Recent commits:"
+          git log --oneline -2
+
+      - name: Push rebased branch
+        shell: bash
+        run: |
+          git push origin HEAD:pr92-external-tool-api-rebased --force-with-lease
