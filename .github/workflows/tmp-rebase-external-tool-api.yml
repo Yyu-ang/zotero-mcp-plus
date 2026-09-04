@@ -50,10 +50,12 @@ jobs:
           from pathlib import Path
           p = Path('zotero-mcp-plugin/src/modules/streamableMCPServer.ts')
           s = p.read_text()
-          old = """        default:\n          throw new Error(`Unknown tool: ${name}`);\n        default: {\n"""
-          if old not in s:
-              raise SystemExit('expected duplicated default sequence not found')
-          s = s.replace(old, "        default: {\n", 1)
+          simple = "        default:\n          throw new Error(`Unknown tool: ${name}`);\n"
+          if simple not in s:
+              raise SystemExit('simple Unknown tool default not found')
+          if 'const registry = getToolRegistry();' not in s:
+              raise SystemExit('external registry default not found')
+          s = s.replace(simple, '', 1)
           p.write_text(s)
           PY
           git add zotero-mcp-plugin/src/modules/streamableMCPServer.ts
@@ -69,6 +71,7 @@ jobs:
         shell: bash
         run: |
           git diff d97cae2b8f823987596b151849d7abdd020a4cd9..HEAD --check
+          test "$(git rev-list --count d97cae2b8f823987596b151849d7abdd020a4cd9..HEAD)" = "1"
           echo "Changed files:"
           git diff --name-only d97cae2b8f823987596b151849d7abdd020a4cd9..HEAD
           echo "Recent commits:"
