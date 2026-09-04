@@ -1,0 +1,67 @@
+name: tmp rebase external tool api
+
+on:
+  push:
+    branches:
+      - tmp-rebase-external-tool-api
+
+permissions:
+  contents: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: pr92-external-tool-api-rebased
+          fetch-depth: 0
+
+      - name: Reapply external tool API commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin pr92-external-tool-api
+
+          set +e
+          git cherry-pick 9015cd9faa4a55f1a732a78010b298e602e0f811
+          rc=$?
+          set -e
+
+          if [ "$rc" -ne 0 ]; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            echo "Conflicts to resolve with three-way union:"
+            echo "$conflicts"
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              git show ":1:$f" > /tmp/base
+              git show ":2:$f" > /tmp/ours
+              git show ":3:$f" > /tmp/theirs
+              git merge-file --union /tmp/ours /tmp/base /tmp/theirs || true
+              cp /tmp/ours "$f"
+              git add "$f"
+            done <<< "$conflicts"
+            GIT_EDITOR=true git cherry-pick --continue
+          fi
+
+      - name: Validate build
+        working-directory: zotero-mcp-plugin
+        run: |
+          npm ci
+          npm run build
+
+      - name: Validate diff
+        shell: bash
+        run: |
+          git diff d97cae2b8f823987596b151849d7abdd020a4cd9..HEAD --check
+          echo "Changed files:"
+          git diff --name-only d97cae2b8f823987596b151849d7abdd020a4cd9..HEAD
+          echo "Recent commits:"
+          git log --oneline -2
+
+      - name: Push rebased branch
+        shell: bash
+        run: |
+          git push origin HEAD:pr92-external-tool-api-rebased --force-with-lease
