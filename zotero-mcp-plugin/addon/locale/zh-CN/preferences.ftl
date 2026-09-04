@@ -225,6 +225,8 @@ pref-write-enable-text = 启用写入操作
 pref-write-enable-sub = 允许 AI 客户端创建和修改笔记（默认关闭以确保安全）
 pref-citation-files-enable-text = 启用引文文件工具
 pref-citation-files-enable-sub = 允许 sync_bib 和 cite 写入 .bib/.tex/.md 文件（默认关闭以确保安全）
+pref-external-tools-enable-text = 启用外部插件工具
+pref-external-tools-enable-sub = 向 MCP 暴露其他 Zotero 插件注册的工具（默认关闭）
 
 pref-contact-title = 联系方式
 pref-contact-email = 邮箱：fransjone@mail.com

@@ -5,6 +5,7 @@ import { getString, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { createZToolkit } from "./utils/ztoolkit";
 import { MCPSettingsService } from "./modules/mcpSettingsService";
+import { resetToolRegistry } from "./modules/toolRegistry";
 import { registerSemanticIndexColumn, unregisterSemanticIndexColumn, refreshSemanticColumn } from "./modules/semanticIndexColumn";
 import { registerSemanticSearchToolbar, registerFindSimilarMenu, unregisterSemanticSearchUI } from "./modules/semanticSearchDialog";
 import {
@@ -635,6 +636,8 @@ async function onShutdown(): Promise<void> {
     const err = error instanceof Error ? error : new Error(String(error));
     ztoolkit.log(`[MCP Plugin] [SHUTDOWN] Error removing menus: ${err.message}`, "error");
   }
+
+  resetToolRegistry();
 
   ztoolkit.log("[MCP Plugin] [SHUTDOWN] Unregistering server preferences...");
   serverPreferences.unregister();
