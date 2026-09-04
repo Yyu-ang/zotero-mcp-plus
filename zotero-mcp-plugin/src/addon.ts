@@ -4,6 +4,7 @@ import { HttpServer, httpServer } from "./modules/httpServer";
 import { serverPreferences } from "./modules/serverPreferences";
 import hooks from "./hooks";
 import { createZToolkit } from "./utils/ztoolkit";
+import { getToolRegistry, type ExternalToolDefinition } from "./modules/toolRegistry";
 
 class Addon {
   public data: {
@@ -52,6 +53,16 @@ class Addon {
         Zotero.debug("===MCP=== Manually stopping server...");
         addon.data.httpServer?.stop();
       },
+      registerTool: (definition: ExternalToolDefinition) =>
+        getToolRegistry().registerTool(definition),
+      unregisterTool: (name: string, pluginID: string) =>
+        getToolRegistry().unregisterTool(name, pluginID),
+      unregisterAllTools: (pluginID: string) =>
+        getToolRegistry().unregisterAllTools(pluginID),
+      getRegisteredTools: () => getToolRegistry().getRegisteredTools(),
+      isToolRegistered: (name: string) => getToolRegistry().hasTool(name),
+      onToolListChanged: (listener: () => void) =>
+        getToolRegistry().onToolListChanged(listener),
     };
   }
 }
