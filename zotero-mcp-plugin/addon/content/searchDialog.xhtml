@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet href="chrome://global/skin/" type="text/css"?> <?xml-stylesheet
+href="chrome://__addonRef__/content/searchDialog.css" type="text/css"?>
+<!DOCTYPE window>
+<window
+  id="__addonRef__-semantic-search-window"
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  width="900"
+  height="620"
+  persist="width,height,screenX,screenY"
+>
+  <script src="chrome://zotero/content/include.js"></script>
+
+  <html:div id="semantic-search-root">
+    <html:div id="semantic-search-header">
+      <html:input id="semantic-search-query" type="search" />
+      <html:button id="semantic-search-submit" type="button"></html:button>
+    </html:div>
+    <html:div id="semantic-search-status"></html:div>
+    <html:div id="semantic-search-results" role="listbox"></html:div>
+    <html:div id="semantic-search-footer">
+      <html:span id="semantic-search-hint"></html:span>
+      <html:button id="semantic-search-close" type="button"></html:button>
+    </html:div>
+  </html:div>
+
+  <script type="application/javascript">
+    <![CDATA[
+        const args = window.arguments?.[0] || {};
+        const strings = args.strings || {};
+        const queryInput = document.getElementById('semantic-search-query');
+        const submitButton = document.getElementById('semantic-search-submit');
+        const status = document.getElementById('semantic-search-status');
+        const resultsContainer = document.getElementById('semantic-search-results');
+        const hint = document.getElementById('semantic-search-hint');
+        const closeButton = document.getElementById('semantic-search-close');
+        let currentResults = [];
+
+        document.title = strings.title || 'Semantic Search';
+        queryInput.placeholder = strings.placeholder || '';
+        submitButton.textContent = strings.search || 'Search';
+        hint.textContent = strings.hint || '';
+        closeButton.textContent = strings.close || 'Close';
+
+        function setBusy(busy) {
+          queryInput.disabled = busy;
+          submitButton.disabled = busy;
+          submitButton.textContent = busy
+            ? (strings.searching || 'Searching…')
+            : (strings.search || 'Search');
+          if (busy) status.textContent = strings.searching || 'Searching…';
+        }
+
+        function showError(message) {
+          status.textContent = `${strings.searchError || 'Search failed'}: ${message}`;
+          status.className = 'error';
+        }
+
+        function resultSubtitle(result) {
+          const parts = [];
+          if (result.creators) parts.push(`${strings.creators || 'Creators'}: ${result.creators}`);
+          if (result.year) parts.push(`${strings.year || 'Year'}: ${result.year}`);
+          parts.push(`${strings.score || 'Score'}: ${(Number(result.score || 0) * 100).toFixed(1)}%`);
+          return parts.join(' · ');
+        }
+
+        function displayResults(results) {
+          currentResults = Array.isArray(results) ? results : [];
+          resultsContainer.replaceChildren();
+          status.className = '';
+          if (currentResults.length === 0) {
+            status.textContent = strings.noResults || 'No results';
+            return;
+          }
+          status.textContent = `${currentResults.length}`;
+
+          for (const result of currentResults) {
+            const row = document.createElementNS('http://www.w3.org/1999/xhtml', 'button');
+            row.type = 'button';
+            row.className = 'semantic-result';
+            row.setAttribute('role', 'option');
+
+            const title = document.createElementNS('http://www.w3.org/1999/xhtml', 'span');
+            title.className = 'semantic-result-title';
+            title.textContent = result.title || result.itemKey || '';
+            row.appendChild(title);
+
+            const subtitle = document.createElementNS('http://www.w3.org/1999/xhtml', 'span');
+            subtitle.className = 'semantic-result-meta';
+            subtitle.textContent = resultSubtitle(result);
+            row.appendChild(subtitle);
+
+            const snippet = result.matchedChunks?.[0]?.text;
+            if (snippet) {
+              const preview = document.createElementNS('http://www.w3.org/1999/xhtml', 'span');
+              preview.className = 'semantic-result-snippet';
+              preview.textContent = snippet;
+              row.appendChild(preview);
+            }
+
+            row.addEventListener('dblclick', async () => {
+              await args.openItemCallback?.(result.itemKey);
+            });
+            resultsContainer.appendChild(row);
+          }
+        }
+
+        async function performSearch() {
+          const query = queryInput.value.trim();
+          if (!query) {
+            displayResults([]);
+            return;
+          }
+          setBusy(true);
+          try {
+            const results = await args.searchCallback?.(query);
+            displayResults(results || []);
+          } catch (error) {
+            showError(error instanceof Error ? error.message : String(error));
+          } finally {
+            setBusy(false);
+          }
+        }
+
+        function setQuery(value) {
+          if (!value) return;
+          queryInput.value = value;
+          performSearch();
+        }
+
+        submitButton.addEventListener('click', performSearch);
+        queryInput.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            performSearch();
+          }
+        });
+        closeButton.addEventListener('click', () => window.close());
+
+        window.displayResults = displayResults;
+        window.showError = showError;
+        window.setBusy = setBusy;
+        window.setQuery = setQuery;
+
+        if (args.initialQuery) setQuery(args.initialQuery);
+        else queryInput.focus();
+      ]]>
+  </script>
+</window>
