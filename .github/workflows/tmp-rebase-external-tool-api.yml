@@ -46,6 +46,19 @@ jobs:
             GIT_EDITOR=true git cherry-pick --continue
           fi
 
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('zotero-mcp-plugin/src/modules/streamableMCPServer.ts')
+          s = p.read_text()
+          old = """        default:\n          throw new Error(`Unknown tool: ${name}`);\n        default: {\n"""
+          if old not in s:
+              raise SystemExit('expected duplicated default sequence not found')
+          s = s.replace(old, "        default: {\n", 1)
+          p.write_text(s)
+          PY
+          git add zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          git commit --amend --no-edit
+
       - name: Validate build
         working-directory: zotero-mcp-plugin
         run: |
