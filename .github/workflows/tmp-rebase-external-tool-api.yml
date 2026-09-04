@@ -48,27 +48,38 @@ jobs:
 
           python - <<'PY'
           from pathlib import Path
-          import re
           p = Path('zotero-mcp-plugin/src/modules/streamableMCPServer.ts')
           s = p.read_text()
-          registry = s.index('const registry = getToolRegistry();')
-          defaults = list(re.finditer(r'(?m)^        default:\s*(?:\{)?\s*$', s[:registry]))
-          if len(defaults) < 2:
-              raise SystemExit(f'expected at least two defaults before registry, found {len(defaults)}')
-          external_default = defaults[-1]
-          previous_default = defaults[-2]
-          segment = s[previous_default.start():external_default.start()]
           unknown = 'throw new Error(`Unknown tool: ${name}`);'
-          if unknown not in segment:
-              raise SystemExit('previous default is not the old Unknown tool handler')
-          throw_end = segment.index(unknown) + len(unknown)
-          nl = segment.find('\n', throw_end)
-          if nl == -1:
-              nl = throw_end
-          else:
-              nl += 1
-          segment = segment[:previous_default.start()-previous_default.start()] + segment[nl:]
-          s = s[:previous_default.start()] + segment + s[external_default.start():]
+          positions = []
+          start = 0
+          while True:
+              i = s.find(unknown, start)
+              if i == -1:
+                  break
+              positions.append(i)
+              start = i + len(unknown)
+          if len(positions) < 2:
+              raise SystemExit(f'expected duplicate Unknown tool handlers, found {len(positions)}')
+          remove_start = remove_end = None
+          for pos in positions:
+              d = s.rfind('\n        default:', 0, pos)
+              if d == -1:
+                  continue
+              d += 1
+              block = s[d:pos]
+              if 'getToolRegistry()' not in block:
+                  remove_start = d
+                  eol = s.find('\n', pos + len(unknown))
+                  remove_end = len(s) if eol == -1 else eol + 1
+                  break
+          if remove_start is None:
+              raise SystemExit('could not identify old simple Unknown tool default')
+          s = s[:remove_start] + s[remove_end:]
+          if s.count(unknown) != 1:
+              raise SystemExit(f'expected one Unknown tool handler after fix, found {s.count(unknown)}')
+          if 'const registry = getToolRegistry();' not in s:
+              raise SystemExit('external registry handler missing after fix')
           p.write_text(s)
           PY
           git add zotero-mcp-plugin/src/modules/streamableMCPServer.ts
