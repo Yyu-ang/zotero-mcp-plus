@@ -28,6 +28,8 @@ import {
 } from './deferredNotifierCommitter';
 import { CitationExportService } from './citationExportService';
 
+const CITATION_FILE_TOOLS_PREF = 'extensions.zotero.zotero-mcp-plugin.citationFiles.enabled';
+
 export interface MCPRequest {
   jsonrpc: '2.0';
   id?: string | number | null;
@@ -1202,6 +1204,40 @@ export class StreamableMCPServer {
             }
           }
         }
+      },
+      {
+        name: 'sync_bib',
+        description: 'Export a Zotero library to a .bib file using Better BibTeX. Disabled by default because this writes to the local filesystem.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            bibPath: { type: 'string', description: 'Absolute path to the target .bib file.' },
+            format: { type: 'string', enum: ['bibtex', 'biblatex'], description: 'Bibliography format (default: bibtex).' },
+            libraryID: { type: 'number', description: 'Optional Zotero library ID.' },
+            includeChildren: { type: 'boolean', description: 'Include child regular items when collecting library items (default: false).' },
+            overwrite: { type: 'boolean', description: 'Required true to replace an existing .bib file (default: false).' },
+            batchSize: { type: 'number', minimum: 1, maximum: 500, description: 'Items per Better BibTeX export batch (default: 100).' }
+          },
+          required: ['bibPath']
+        }
+      },
+      {
+        name: 'cite',
+        description: 'Insert one Zotero citation into an existing LaTeX or Markdown draft and add its BibTeX entry to a .bib file. Disabled by default because this edits local files.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            itemKey: { type: 'string', description: 'Exact Zotero item key. Prefer this over query.' },
+            query: { type: 'string', description: 'Title/creator query; must resolve to exactly one item.' },
+            bibPath: { type: 'string', description: 'Absolute .bib path. Created if absent; existing entries are preserved.' },
+            texPath: { type: 'string', description: 'Absolute path to an existing .tex draft. Mutually exclusive with markdownPath.' },
+            markdownPath: { type: 'string', description: 'Absolute path to an existing .md/.markdown draft. Mutually exclusive with texPath.' },
+            marker: { type: 'string', description: 'Marker text to replace with the citation.' },
+            append: { type: 'boolean', description: 'Set true to explicitly append when marker is omitted.' },
+            libraryID: { type: 'number', description: 'Optional Zotero library ID.' }
+          },
+          required: ['bibPath']
+        }
       }
     ];
 
@@ -1212,14 +1248,21 @@ export class StreamableMCPServer {
       ? tools.filter((t: any) => !semanticToolNames.has(t.name))
       : tools;
 
+    // File-editing citation tools have their own default-off safety gate.
+    const citationFilesEnabled = Zotero.Prefs.get(CITATION_FILE_TOOLS_PREF, true);
+    const citationFileToolNames = new Set(['sync_bib', 'cite']);
+    const citationFilteredTools = citationFilesEnabled === true
+      ? filteredTools
+      : filteredTools.filter((t: any) => !citationFileToolNames.has(t.name));
+
     // Filter out write tools if write operations are disabled (default: disabled)
     const writeEnabled = Zotero.Prefs.get('extensions.zotero.zotero-mcp-plugin.write.enabled', true);
     const writeToolNames = new Set([
       'write_note', 'write_tag', 'write_metadata', 'write_item', 'add_by_identifier',
     ]);
     const finalTools = writeEnabled === true
-      ? filteredTools
-      : filteredTools.filter((t: any) => !writeToolNames.has(t.name));
+      ? citationFilteredTools
+      : citationFilteredTools.filter((t: any) => !writeToolNames.has(t.name));
 
     return this.createResponse(request.id ?? null, { tools: finalTools });
   }
@@ -1512,6 +1555,16 @@ export class StreamableMCPServer {
 
         case 'list_citation_styles':
           result = await this.callListCitationStyles(args);
+          break;
+
+        case 'sync_bib':
+          this.assertCitationFileToolsEnabled();
+          result = await this.callSyncBib(args);
+          break;
+
+        case 'cite':
+          this.assertCitationFileToolsEnabled();
+          result = await this.callCite(args);
           break;
 
         default:
@@ -1937,6 +1990,39 @@ export class StreamableMCPServer {
 
   private async callListCitationStyles(args: any): Promise<any> {
     return this.getCitationExportService().listStyles(args?.filter);
+  }
+
+  private assertCitationFileToolsEnabled(): void {
+    const enabled = Zotero.Prefs.get(CITATION_FILE_TOOLS_PREF, true);
+    if (enabled !== true) {
+      throw new Error(
+        'Citation file tools are disabled. Enable "Citation File Tools" in Zotero MCP Plugin preferences before using sync_bib or cite.',
+      );
+    }
+  }
+
+  private async callSyncBib(args: any): Promise<any> {
+    return this.getCitationExportService().syncBibFile({
+      bibPath: args?.bibPath,
+      format: args?.format,
+      libraryID: args?.libraryID,
+      includeChildren: args?.includeChildren,
+      overwrite: args?.overwrite,
+      batchSize: args?.batchSize,
+    });
+  }
+
+  private async callCite(args: any): Promise<any> {
+    return this.getCitationExportService().citeInDraft({
+      itemKey: args?.itemKey,
+      query: args?.query,
+      bibPath: args?.bibPath,
+      texPath: args?.texPath,
+      markdownPath: args?.markdownPath,
+      marker: args?.marker,
+      append: args?.append,
+      libraryID: args?.libraryID,
+    });
   }
 
   // ============ Semantic Search Methods ============

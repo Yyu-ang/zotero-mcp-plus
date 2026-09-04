@@ -5,7 +5,10 @@
  * - Formatted references and in-text citations use Zotero's native Quick Copy API.
  */
 
+import { assertSafeCitationFilePath } from "./citationFileSafety";
+
 declare let ztoolkit: ZToolkit;
+declare const IOUtils: any;
 
 const BBT_TRANSLATORS: Record<string, string> = {
   biblatex: "Better BibLaTeX",
@@ -396,4 +399,256 @@ export class CitationExportService {
       styles,
     };
   }
+
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  private countBibtexEntries(value: string): number {
+    return value.match(/@\w+\s*\{\s*[^,\s]+/g)?.length ?? 0;
+  }
+
+  private async getAllItemKeys(
+    libraryID: number,
+    includeChildren = false,
+  ): Promise<string[]> {
+    const search = new Zotero.Search();
+    (search as any).libraryID = libraryID;
+    if (!includeChildren) {
+      search.addCondition("noChildren", "true");
+    }
+    const ids = await search.search();
+    const items = await Zotero.Items.getAsync(ids);
+    return items
+      .filter((item: Zotero.Item) => !item.isAttachment() && !item.isNote())
+      .map((item: Zotero.Item) => item.key);
+  }
+
+  private async findItemByKeyOrQuery(
+    itemKey: string | undefined,
+    query: string | undefined,
+    libraryID: number,
+  ): Promise<Zotero.Item> {
+    if (itemKey && query) {
+      throw new Error("Provide either itemKey or query, not both");
+    }
+    if (itemKey) {
+      const item = await Zotero.Items.getByLibraryAndKeyAsync(libraryID, itemKey);
+      if (!item || item.isAttachment() || item.isNote()) {
+        throw new Error(`No citable item found with key: ${itemKey}`);
+      }
+      return item;
+    }
+    if (!query?.trim()) {
+      throw new Error("Either itemKey or query must be provided");
+    }
+
+    const search = new Zotero.Search();
+    (search as any).libraryID = libraryID;
+    search.addCondition("noChildren", "true");
+    const ids = await search.search();
+    const items = await Zotero.Items.getAsync(ids);
+    const normalized = query.trim().toLowerCase();
+    const matches = items.filter((item: Zotero.Item) => {
+      if (item.isAttachment() || item.isNote()) return false;
+      const title = String(item.getField("title") || "").toLowerCase();
+      const creators = item
+        .getCreators()
+        .map((creator: any) =>
+          [creator.lastName, creator.firstName, creator.name]
+            .filter(Boolean)
+            .join(" "),
+        )
+        .join(" ")
+        .toLowerCase();
+      return title.includes(normalized) || creators.includes(normalized);
+    });
+
+    if (matches.length === 0) {
+      throw new Error(`No items found matching query: "${query}"`);
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `Query "${query}" matched ${matches.length} items. Use itemKey for an unambiguous citation.`,
+      );
+    }
+    return matches[0];
+  }
+
+  async syncBibFile(params: {
+    bibPath: string;
+    format?: "bibtex" | "biblatex";
+    libraryID?: number;
+    includeChildren?: boolean;
+    overwrite?: boolean;
+    batchSize?: number;
+  }): Promise<any> {
+    const {
+      format = "bibtex",
+      libraryID,
+      includeChildren = false,
+      overwrite = false,
+      batchSize = 100,
+    } = params;
+    const bibPath = assertSafeCitationFilePath(
+      params.bibPath,
+      [".bib"],
+      "bibPath",
+    );
+    if (format !== "bibtex" && format !== "biblatex") {
+      throw new Error("sync_bib supports only bibtex or biblatex output");
+    }
+    if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 500) {
+      throw new Error("batchSize must be an integer between 1 and 500");
+    }
+    if ((await IOUtils.exists(bibPath)) && !overwrite) {
+      throw new Error(
+        `Refusing to overwrite existing bibliography: ${bibPath}. Set overwrite=true to replace it.`,
+      );
+    }
+
+    const resolvedLibraryID =
+      libraryID ?? Zotero.Libraries.userLibraryID;
+    const itemKeys = await this.getAllItemKeys(
+      resolvedLibraryID,
+      includeChildren,
+    );
+    if (itemKeys.length === 0) {
+      throw new Error("No citable items found in the library");
+    }
+
+    const chunks: string[] = [];
+    const missingKeys: string[] = [];
+    let exportedCount = 0;
+    for (let offset = 0; offset < itemKeys.length; offset += batchSize) {
+      const batch = itemKeys.slice(offset, offset + batchSize);
+      const exported = await this.exportBibliography({
+        itemKeys: batch,
+        format,
+        libraryID: resolvedLibraryID,
+      });
+      const content = String(exported.content ?? "").trim();
+      if (content) chunks.push(content);
+      exportedCount += Number(exported.exportedCount ?? 0);
+      if (Array.isArray(exported.missingKeys)) {
+        missingKeys.push(...exported.missingKeys);
+      }
+    }
+
+    const content = `${chunks.join("\n\n")}\n`;
+    await IOUtils.writeUTF8(bibPath, content);
+
+    ztoolkit.log(
+      `[CitationExport] syncBibFile: format=${format}, items=${itemKeys.length}, exported=${exportedCount}, batches=${Math.ceil(itemKeys.length / batchSize)}, path=${bibPath}`,
+    );
+    return {
+      path: bibPath,
+      format,
+      entries: this.countBibtexEntries(content),
+      exportedCount,
+      batchSize,
+      batches: Math.ceil(itemKeys.length / batchSize),
+      ...(missingKeys.length ? { missingKeys } : {}),
+    };
+  }
+
+  async citeInDraft(params: {
+    itemKey?: string;
+    query?: string;
+    bibPath: string;
+    texPath?: string;
+    markdownPath?: string;
+    marker?: string;
+    append?: boolean;
+    libraryID?: number;
+  }): Promise<any> {
+    const bibPath = assertSafeCitationFilePath(
+      params.bibPath,
+      [".bib"],
+      "bibPath",
+    );
+    const hasTex = typeof params.texPath === "string" && !!params.texPath.trim();
+    const hasMarkdown =
+      typeof params.markdownPath === "string" && !!params.markdownPath.trim();
+    if (hasTex === hasMarkdown) {
+      throw new Error("Provide exactly one of texPath or markdownPath");
+    }
+    const draftPath = hasTex
+      ? assertSafeCitationFilePath(params.texPath, [".tex"], "texPath")
+      : assertSafeCitationFilePath(
+          params.markdownPath,
+          [".md", ".markdown"],
+          "markdownPath",
+        );
+    if (!(await IOUtils.exists(draftPath))) {
+      throw new Error(`Draft file does not exist: ${draftPath}`);
+    }
+    if (!params.marker && params.append !== true) {
+      throw new Error(
+        "Provide marker to replace, or set append=true to explicitly append a citation",
+      );
+    }
+
+    const resolvedLibraryID =
+      params.libraryID ?? Zotero.Libraries.userLibraryID;
+    const item = await this.findItemByKeyOrQuery(
+      params.itemKey,
+      params.query,
+      resolvedLibraryID,
+    );
+    const exported = await this.exportBibliography({
+      itemKeys: [item.key],
+      format: "bibtex",
+      libraryID: resolvedLibraryID,
+    });
+    const citekey = exported.citationKeys?.[0];
+    if (!citekey) {
+      throw new Error("Better BibTeX did not return a citation key");
+    }
+    const bibtex = String(exported.content ?? "").trim();
+
+    let existingBib = "";
+    if (await IOUtils.exists(bibPath)) {
+      existingBib = await IOUtils.readUTF8(bibPath);
+    }
+    const keyRegex = new RegExp(
+      `@\\w+\\s*\\{\\s*${this.escapeRegex(citekey)}\\s*,`,
+      "i",
+    );
+    const bibEntryAdded = !keyRegex.test(existingBib);
+    const nextBib = bibEntryAdded
+      ? `${existingBib.replace(/\s*$/, "")}${existingBib.trim() ? "\n\n" : ""}${bibtex}\n`
+      : existingBib;
+
+    const citation = hasTex ? `\\cite{${citekey}}` : `[@${citekey}]`;
+    const draft = await IOUtils.readUTF8(draftPath);
+    let nextDraft: string;
+    if (params.marker) {
+      if (!draft.includes(params.marker)) {
+        throw new Error(`Marker "${params.marker}" not found in ${draftPath}`);
+      }
+      nextDraft = draft.replace(params.marker, citation);
+    } else {
+      nextDraft = `${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${citation}\n`;
+    }
+
+    if (bibEntryAdded) {
+      await IOUtils.writeUTF8(bibPath, nextBib);
+    }
+    await IOUtils.writeUTF8(draftPath, nextDraft);
+
+    ztoolkit.log(
+      `[CitationExport] citeInDraft: itemKey=${item.key}, citekey=${citekey}, bibAdded=${bibEntryAdded}, draft=${draftPath}`,
+    );
+    return {
+      itemKey: item.key,
+      title: String(item.getField("title") || ""),
+      citationKey: citekey,
+      bibPath,
+      bibEntryAdded,
+      editedFile: draftPath,
+      inserted: citation,
+    };
+  }
+
 }
