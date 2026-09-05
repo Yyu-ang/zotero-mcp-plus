@@ -30,6 +30,10 @@ The Zotero MCP server is a tool server based on the Model Context Protocol that 
 
 This enables AI assistants to help you with literature reviews, citation management, content analysis, annotation organization, knowledge base management, and more.
 
+### Acknowledgment
+
+The semantic-search dialog UI and bundled `zotseek-favicon@0.5x.png` are adapted from [ZotSeek](https://github.com/introfini/ZotSeek) by José Fernandes and are used under the MIT License.
+
 ## 🚀 Project Structure
 
 This project now features a **unified architecture** with an integrated MCP server:
