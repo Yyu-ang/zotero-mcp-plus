@@ -30,7 +30,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Build audited split
-        run: python3 scripts/build_pr92_bbt_citation_v2.py
+        run: |
+          python3 scripts/build_pr92_bbt_citation_v2.py
+          python3 scripts/fix_pr92_bbt_tests.py
 
       - name: Verify scope and behavior guards
         shell: bash
@@ -57,7 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm .github/workflows/tmp-pr92-bbt-citation-v2.yml scripts/build_pr92_bbt_citation_v2.py
+          rm .github/workflows/tmp-pr92-bbt-citation-v2.yml scripts/build_pr92_bbt_citation_v2.py scripts/fix_pr92_bbt_tests.py
           git add -A
           git commit -m "fix(citation): restore cloneorcopy behavior with QuickCopy fixes"
           git push origin HEAD:tmp/pr92-bbt-citation-v2-build-3
