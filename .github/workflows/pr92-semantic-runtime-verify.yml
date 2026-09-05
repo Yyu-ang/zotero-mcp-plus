@@ -1,0 +1,127 @@
+name: PR92 semantic runtime parity verify
+
+on:
+  push:
+    branches:
+      - review/pr92-semantic-runtime-verify
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: zotero-mcp-plugin/package-lock.json
+      - name: Build cloneorcopy baseline and audited integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/pr92-base c616d620427cbbd075d48caf6560ddd9c9f72728
+          (
+            cd /tmp/pr92-base/zotero-mcp-plugin
+            npm ci
+            npm run build
+          )
+          (
+            cd zotero-mcp-plugin
+            npm ci
+            npm run build
+          )
+      - name: Compare built semantic dialog assets exactly
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/tmp/pr92-base/zotero-mcp-plugin/.scaffold/build/addon/content
+          NEW=zotero-mcp-plugin/.scaffold/build/addon/content
+          echo '=== BUILT XHTML first 10 lines: baseline ==='
+          sed -n '1,10p' "$BASE/searchDialog.xhtml"
+          echo '=== BUILT XHTML first 10 lines: integration ==='
+          sed -n '1,10p' "$NEW/searchDialog.xhtml"
+          echo '=== SHA256 ==='
+          sha256sum "$BASE/searchDialog.xhtml" "$NEW/searchDialog.xhtml" "$BASE/searchDialog.css" "$NEW/searchDialog.css"
+          echo '=== XHTML diff ==='
+          diff -u "$BASE/searchDialog.xhtml" "$NEW/searchDialog.xhtml" || true
+          echo '=== CSS diff ==='
+          diff -u "$BASE/searchDialog.css" "$NEW/searchDialog.css" || true
+      - name: Prove hover and table code parity
+        shell: python
+        run: |
+          from pathlib import Path
+          import re, hashlib, difflib
+
+          base = Path('/tmp/pr92-base/zotero-mcp-plugin/.scaffold/build/addon/content/searchDialog.xhtml').read_text()
+          new = Path('zotero-mcp-plugin/.scaffold/build/addon/content/searchDialog.xhtml').read_text()
+          base_css = Path('/tmp/pr92-base/zotero-mcp-plugin/.scaffold/build/addon/content/searchDialog.css').read_text()
+          new_css = Path('zotero-mcp-plugin/.scaffold/build/addon/content/searchDialog.css').read_text()
+
+          def normalize_xhtml(s: str) -> str:
+              s = re.sub(r'<!-- Semantic search dialog UI adapted from ZotSeek.*?-->\n?', '', s)
+              return s
+
+          def normalize_css(s: str) -> str:
+              lines = s.splitlines()
+              if lines and ('ZotSeek Dialog Styles' in lines[0] or 'Semantic search dialog styles adapted from ZotSeek' in lines[0]):
+                  lines = lines[1:]
+              return '\n'.join(lines).strip() + '\n'
+
+          nx_base = normalize_xhtml(base)
+          nx_new = normalize_xhtml(new)
+          nc_base = normalize_css(base_css)
+          nc_new = normalize_css(new_css)
+          print('normalized XHTML equal:', nx_base == nx_new)
+          print('normalized CSS equal:', nc_base == nc_new)
+          if nx_base != nx_new:
+              print('NORMALIZED XHTML DIFF')
+              print(''.join(difflib.unified_diff(nx_base.splitlines(True), nx_new.splitlines(True))))
+          if nc_base != nc_new:
+              print('NORMALIZED CSS DIFF')
+              print(''.join(difflib.unified_diff(nc_base.splitlines(True), nc_new.splitlines(True))))
+
+          functions = [
+              'setupSnippetTooltip', 'onTableMouseMove', 'positionTooltip',
+              'hideSnippetTooltip', 'buildSnippetHtml', 'windowSnippet',
+              'highlightSnippet', 'getRowData', 'refreshTable', 'initTable'
+          ]
+          def extract_function(src: str, name: str) -> str:
+              marker = f'function {name}('
+              start = src.find(marker)
+              if start < 0:
+                  raise AssertionError(f'missing {name}')
+              brace = src.find('{', start)
+              depth = 0
+              i = brace
+              while i < len(src):
+                  c = src[i]
+                  if c == '{': depth += 1
+                  elif c == '}':
+                      depth -= 1
+                      if depth == 0:
+                          return src[start:i+1]
+                  i += 1
+              raise AssertionError(f'unclosed {name}')
+
+          for name in functions:
+              a = extract_function(base, name)
+              b = extract_function(new, name)
+              same = a == b
+              print(f'{name}: identical={same}, sha={hashlib.sha256(a.encode()).hexdigest()[:16]}')
+              if not same:
+                  print(''.join(difflib.unified_diff(a.splitlines(True), b.splitlines(True), fromfile='base', tofile='new')))
+
+          assert nx_base == nx_new, 'built XHTML differs beyond attribution comment'
+          assert nc_base == nc_new, 'built CSS differs beyond attribution comment'
+          for name in functions:
+              assert extract_function(base, name) == extract_function(new, name), f'{name} changed'
+      - name: Show controller-only semantic differences
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --no-ext-diff --unified=80 c616d620427cbbd075d48caf6560ddd9c9f72728..HEAD -- zotero-mcp-plugin/src/modules/semanticSearchDialog.ts
