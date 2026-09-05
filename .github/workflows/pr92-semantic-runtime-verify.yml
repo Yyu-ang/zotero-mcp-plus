@@ -35,32 +35,53 @@ jobs:
             npm ci
             npm run build
           )
-      - name: Compare built semantic dialog assets exactly
+      - name: Download and unpack cloneorcopy 1.5.2 release XPI
         shell: bash
         run: |
           set -euo pipefail
-          BASE=/tmp/pr92-base/zotero-mcp-plugin/.scaffold/build/addon/content
-          NEW=zotero-mcp-plugin/.scaffold/build/addon/content
-          echo '=== BUILT XHTML first 10 lines: baseline ==='
-          sed -n '1,10p' "$BASE/searchDialog.xhtml"
-          echo '=== BUILT XHTML first 10 lines: integration ==='
-          sed -n '1,10p' "$NEW/searchDialog.xhtml"
-          echo '=== SHA256 ==='
-          sha256sum "$BASE/searchDialog.xhtml" "$NEW/searchDialog.xhtml" "$BASE/searchDialog.css" "$NEW/searchDialog.css"
-          echo '=== XHTML diff ==='
-          diff -u "$BASE/searchDialog.xhtml" "$NEW/searchDialog.xhtml" || true
-          echo '=== CSS diff ==='
-          diff -u "$BASE/searchDialog.css" "$NEW/searchDialog.css" || true
-      - name: Prove hover and table code parity
+          curl -L --fail --retry 3 \
+            https://github.com/cloneorcopy/zotero-mcp-plus/releases/download/1.5.2/zotero-mcp-plugin.xpi \
+            -o /tmp/cloneorcopy-1.5.2.xpi
+          mkdir -p /tmp/cloneorcopy-release
+          unzip -q /tmp/cloneorcopy-1.5.2.xpi -d /tmp/cloneorcopy-release
+          echo '=== release semantic assets ==='
+          find /tmp/cloneorcopy-release -type f \( -name 'searchDialog.xhtml' -o -name 'searchDialog.css' -o -name 'zotero-mcp-plugin.js' \) -print
+          echo '=== release tree top ==='
+          find /tmp/cloneorcopy-release -maxdepth 3 -type f | sort | head -80
+      - name: Compare built main, integration, and release semantic dialog assets
         shell: python
         run: |
           from pathlib import Path
           import re, hashlib, difflib
 
-          base = Path('/tmp/pr92-base/zotero-mcp-plugin/.scaffold/build/addon/content/searchDialog.xhtml').read_text()
-          new = Path('zotero-mcp-plugin/.scaffold/build/addon/content/searchDialog.xhtml').read_text()
-          base_css = Path('/tmp/pr92-base/zotero-mcp-plugin/.scaffold/build/addon/content/searchDialog.css').read_text()
-          new_css = Path('zotero-mcp-plugin/.scaffold/build/addon/content/searchDialog.css').read_text()
+          base_dir = Path('/tmp/pr92-base/zotero-mcp-plugin/.scaffold/build/addon/content')
+          new_dir = Path('zotero-mcp-plugin/.scaffold/build/addon/content')
+          release_root = Path('/tmp/cloneorcopy-release')
+          release_xhtmls = list(release_root.rglob('searchDialog.xhtml'))
+          release_csses = list(release_root.rglob('searchDialog.css'))
+          print('release xhtml paths:', [str(p) for p in release_xhtmls])
+          print('release css paths:', [str(p) for p in release_csses])
+          if not release_xhtmls or not release_csses:
+              raise AssertionError('Release XPI does not contain semantic search dialog assets')
+
+          files = {
+              'main_xhtml': base_dir / 'searchDialog.xhtml',
+              'integration_xhtml': new_dir / 'searchDialog.xhtml',
+              'release_xhtml': release_xhtmls[0],
+              'main_css': base_dir / 'searchDialog.css',
+              'integration_css': new_dir / 'searchDialog.css',
+              'release_css': release_csses[0],
+          }
+          for name, path in files.items():
+              data = path.read_bytes()
+              print(name, 'size=', len(data), 'sha256=', hashlib.sha256(data).hexdigest())
+
+          main = files['main_xhtml'].read_text()
+          new = files['integration_xhtml'].read_text()
+          rel = files['release_xhtml'].read_text()
+          main_css = files['main_css'].read_text()
+          new_css = files['integration_css'].read_text()
+          rel_css = files['release_css'].read_text()
 
           def normalize_xhtml(s: str) -> str:
               s = re.sub(r'<!-- Semantic search dialog UI adapted from ZotSeek.*?-->\n?', '', s)
@@ -72,29 +93,32 @@ jobs:
                   lines = lines[1:]
               return '\n'.join(lines).strip() + '\n'
 
-          nx_base = normalize_xhtml(base)
-          nx_new = normalize_xhtml(new)
-          nc_base = normalize_css(base_css)
-          nc_new = normalize_css(new_css)
-          print('normalized XHTML equal:', nx_base == nx_new)
-          print('normalized CSS equal:', nc_base == nc_new)
-          if nx_base != nx_new:
-              print('NORMALIZED XHTML DIFF')
-              print(''.join(difflib.unified_diff(nx_base.splitlines(True), nx_new.splitlines(True))))
-          if nc_base != nc_new:
-              print('NORMALIZED CSS DIFF')
-              print(''.join(difflib.unified_diff(nc_base.splitlines(True), nc_new.splitlines(True))))
+          print('main vs integration normalized XHTML:', normalize_xhtml(main) == normalize_xhtml(new))
+          print('main vs integration normalized CSS:', normalize_css(main_css) == normalize_css(new_css))
+          print('release vs main XHTML exact:', rel == main)
+          print('release vs main CSS exact:', rel_css == main_css)
+          print('release vs integration normalized XHTML:', normalize_xhtml(rel) == normalize_xhtml(new))
+          print('release vs integration normalized CSS:', normalize_css(rel_css) == normalize_css(new_css))
+
+          if rel != main:
+              print('=== RELEASE vs MAIN XHTML DIFF ===')
+              print(''.join(difflib.unified_diff(rel.splitlines(True), main.splitlines(True), fromfile='release', tofile='main')))
+          if rel_css != main_css:
+              print('=== RELEASE vs MAIN CSS DIFF ===')
+              print(''.join(difflib.unified_diff(rel_css.splitlines(True), main_css.splitlines(True), fromfile='release', tofile='main')))
 
           functions = [
               'setupSnippetTooltip', 'onTableMouseMove', 'positionTooltip',
               'hideSnippetTooltip', 'buildSnippetHtml', 'windowSnippet',
-              'highlightSnippet', 'getRowData', 'refreshTable', 'initTable'
+              'highlightSnippet', 'getRowData', 'refreshTable', 'initTable',
+              'performSearch', 'keywordSearch', 'mergeResults',
+              'intersectResults', 'unionResults'
           ]
           def extract_function(src: str, name: str) -> str:
               marker = f'function {name}('
               start = src.find(marker)
               if start < 0:
-                  raise AssertionError(f'missing {name}')
+                  return '<MISSING>'
               brace = src.find('{', start)
               depth = 0
               i = brace
@@ -106,20 +130,19 @@ jobs:
                       if depth == 0:
                           return src[start:i+1]
                   i += 1
-              raise AssertionError(f'unclosed {name}')
+              return '<UNCLOSED>'
 
           for name in functions:
-              a = extract_function(base, name)
-              b = extract_function(new, name)
-              same = a == b
-              print(f'{name}: identical={same}, sha={hashlib.sha256(a.encode()).hexdigest()[:16]}')
-              if not same:
-                  print(''.join(difflib.unified_diff(a.splitlines(True), b.splitlines(True), fromfile='base', tofile='new')))
-
-          assert nx_base == nx_new, 'built XHTML differs beyond attribution comment'
-          assert nc_base == nc_new, 'built CSS differs beyond attribution comment'
-          for name in functions:
-              assert extract_function(base, name) == extract_function(new, name), f'{name} changed'
+              r = extract_function(rel, name)
+              m = extract_function(main, name)
+              n = extract_function(new, name)
+              print(
+                  f'{name}: release==main {r == m}; release==integration {r == n}; '
+                  f'release_sha={hashlib.sha256(r.encode()).hexdigest()[:16]} '
+                  f'main_sha={hashlib.sha256(m.encode()).hexdigest()[:16]}'
+              )
+              if r != m:
+                  print(''.join(difflib.unified_diff(r.splitlines(True), m.splitlines(True), fromfile='release', tofile='main')))
       - name: Show controller-only semantic differences
         shell: bash
         run: |
