@@ -138,6 +138,7 @@
     // Snippet tooltip state (matches ZotSeek pattern)
     let snippetTooltip = null;
     let highlightTerms = [];
+    let hoveredSnippetRow = -1;
 
     const SNIPPET_STOPWORDS = new Set([
       'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'at', 'by', 'for',
@@ -317,8 +318,12 @@
       if (queries.length === 0) { showStatus(t('enterQueryPrompt')); return; }
       showStatus(t('searching'));
 
-      // Update highlight terms for snippet tooltip
-      setQueryTerms(queries);
+      // Match current ZotSeek behavior: pure semantic search has no literal-term highlighting.
+      // Keyword/hybrid modes highlight tokenized query terms in the snippet tooltip.
+      const tooltipTerms = searchMode === 'semantic'
+        ? []
+        : queries.flatMap(q => q.split(/\s+/)).filter(Boolean);
+      setQueryTerms(tooltipTerms);
 
       try {
         let allResults = [];
@@ -730,6 +735,9 @@
      * VirtualizedTable recycling row DOM nodes during scroll.
      */
     function setupSnippetTooltip() {
+      // ZotSeek initializes one delegated tooltip per results table.
+      if (snippetTooltip) return;
+
       const tip = document.createElementNS(HTML_NS, 'div');
       tip.className = 'zotseek-snippet-tooltip';
       tip.setAttribute('role', 'tooltip');
@@ -764,6 +772,13 @@
         return;
       }
 
+      // Mousemove fires for every pointer pixel. Avoid rebuilding the tooltip DOM
+      // while the pointer remains on the same virtualized row; only reposition it.
+      if (idx === hoveredSnippetRow && snippetTooltip.classList.contains('show')) {
+        positionTooltip(e.clientX, e.clientY);
+        return;
+      }
+
       const result = displayData[idx];
       const html = result ? buildSnippetHtml(result) : null;
       if (!html) {
@@ -772,6 +787,7 @@
       }
 
       snippetTooltip.innerHTML = html;
+      hoveredSnippetRow = idx;
       snippetTooltip.classList.add('show');
       snippetTooltip.setAttribute('aria-hidden', 'false');
       positionTooltip(e.clientX, e.clientY);
@@ -800,6 +816,7 @@
       if (!snippetTooltip) return;
       snippetTooltip.classList.remove('show');
       snippetTooltip.setAttribute('aria-hidden', 'true');
+      hoveredSnippetRow = -1;
     }
 
     /**
@@ -820,6 +837,12 @@
       if (chunk) {
         const paraNum = (chunk.chunkId ?? 0) + 1;
         meta.push('📍 ' + t('colLocation') + ': ¶' + paraNum);
+      }
+      // ZotSeek's current tooltip includes a second metadata facet (section).
+      // Our semantic result model has itemType instead, so expose that existing field
+      // without changing the search result schema.
+      if (result.itemType) {
+        meta.push('🏷️ ' + t('colType') + ': ' + String(result.itemType));
       }
       const score = chunk ? chunk.score : result.score;
       if (score !== null && !Number.isNaN(score)) {
@@ -1001,7 +1024,7 @@
 
     <!-- Results Container (VirtualizedTable renders here) -->
     <vbox class="virtualized-table-container" flex="1" style="min-height: 150px;">
-      <html:div id="zotseek-results-container" style="flex: 1; min-height: 0;"/>
+      <html:div id="zotseek-results-container"/>
     </vbox>
 
     <separator class="thin"/>
