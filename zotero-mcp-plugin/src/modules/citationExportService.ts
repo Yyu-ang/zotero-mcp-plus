@@ -354,7 +354,7 @@ export class CitationExportService {
           `未找到引文样式 "${style}"。请使用 list_citation_styles 查看可用样式。`,
         );
       }
-      format = `${mode}=${resolved.styleID}`;
+      format = `bibliography=${resolved.styleID}`;
       styleInfo = {
         id: resolved.styleID,
         title: resolved.title,
@@ -362,25 +362,22 @@ export class CitationExportService {
         hasBibliography: resolved.hasBibliography,
       };
     } else {
-      // 使用 Zotero 默认 Quick Copy 设置
+      // 使用 Zotero 默认 Quick Copy 设置。通过 Zotero 自己的解析器处理
+      // bibliography/html=STYLE 等合法格式。
       const defaultSetting =
         (Zotero.Prefs.get("export.quickCopy.setting") as string) || "";
-      const prefix = defaultSetting.split("=")[0];
+      const parsedSetting = (Zotero.QuickCopy as any).unserializeSetting(
+        defaultSetting,
+      );
 
-      if (
-        defaultSetting &&
-        (prefix === "bibliography" || prefix === "citation")
-      ) {
-        // 默认设置本身就是引文格式，按需调整前缀以匹配请求模式
-        const styleIdPart = defaultSetting.substring(
-          defaultSetting.indexOf("=") + 1,
-        );
-        format = `${mode}=${styleIdPart}`;
+      if (parsedSetting?.mode === "bibliography" && parsedSetting?.id) {
+        const styleIdPart = parsedSetting.id;
+        format = `bibliography=${styleIdPart}`;
         styleInfo = { isDefault: true, id: styleIdPart };
       } else {
         // 默认设置非引文格式，回退到 APA
         const fallback = "http://www.zotero.org/styles/apa";
-        format = `${mode}=${fallback}`;
+        format = `bibliography=${fallback}`;
         styleInfo = { isDefault: true, id: fallback, title: "APA (fallback)" };
       }
     }
@@ -394,7 +391,7 @@ export class CitationExportService {
         (Zotero.QuickCopy as any).getContentFromItems(
           items,
           format,
-          lib,
+          undefined,
           asCitations,
         ),
       );
