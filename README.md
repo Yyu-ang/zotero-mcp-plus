@@ -282,6 +282,11 @@ Import items by identifier (DOI, arXiv, ISBN, PMID, ADS bibcode) using Zotero's 
 
 ---
 
+
+### Semantic Search UI Attribution
+
+The Zotero semantic-search dialog UI and ZotSeek-derived icons are adapted from [introfini/ZotSeek](https://github.com/introfini/ZotSeek), by José Fernandes, under the MIT License.
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit pull requests, report issues, or suggest enhancements.

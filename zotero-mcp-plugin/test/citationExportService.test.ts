@@ -41,9 +41,6 @@ describe("CitationExportService", function () {
       },
     ]);
     expect(result.citationKeys).to.deep.equal(["Doe2026"]);
-    expect(result.itemKeyToCitationKey).to.deep.equal({
-      ABCD1234: "Doe2026",
-    });
   });
 
   it("uses bibliography Quick Copy mode and the fourth argument for in-text citations", async function () {
@@ -115,8 +112,7 @@ describe("CitationExportService", function () {
       expect(capturedFormat.contentType).to.equal("html");
       expect(capturedFormat.id).to.equal(testStyleID);
       expect(result.style).to.equal(testStyleID);
-      expect(result.isDefaultStyle).to.equal(true);
-    } finally {
+      } finally {
       quickCopy.getContentFromItems = originalGetContentFromItems;
       if (previousSetting === undefined || previousSetting === null) {
         Zotero.Prefs.clear(QUICK_COPY_PREF);

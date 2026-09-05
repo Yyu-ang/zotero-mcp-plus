@@ -55,8 +55,8 @@ class Addon {
       },
       registerTool: (definition: ExternalToolDefinition) =>
         getToolRegistry().registerTool(definition),
-      unregisterTool: (name: string, pluginID: string) =>
-        getToolRegistry().unregisterTool(name, pluginID),
+      unregisterTool: (name: string) =>
+        getToolRegistry().unregisterTool(name),
       unregisterAllTools: (pluginID: string) =>
         getToolRegistry().unregisterAllTools(pluginID),
       getRegisteredTools: () => getToolRegistry().getRegisteredTools(),

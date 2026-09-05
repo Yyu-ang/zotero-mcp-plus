@@ -5,7 +5,7 @@ export interface ExternalToolDefinition {
   description: string;
   inputSchema: Record<string, unknown>;
   handler: (args: Record<string, unknown>) => Promise<unknown> | unknown;
-  pluginID: string;
+  pluginID?: string;
   enabled?: boolean;
 }
 
@@ -17,16 +17,11 @@ export interface RegisteredToolInfo {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  pluginID: string;
+  pluginID?: string;
   enabled: boolean;
   registeredAt: string;
 }
 
-export interface ExternalToolRegistration {
-  name: string;
-  pluginID: string;
-  unregister(): boolean;
-}
 
 type ChangeListener = () => void;
 
@@ -97,7 +92,7 @@ export class ToolRegistry {
   private tools = new Map<string, RegisteredTool>();
   private listeners = new Set<ChangeListener>();
 
-  registerTool(definition: ExternalToolDefinition): ExternalToolRegistration {
+  registerTool(definition: ExternalToolDefinition): boolean {
     this.validateDefinition(definition);
     if (this.tools.size >= MAX_EXTERNAL_TOOLS) {
       throw new Error(
@@ -105,9 +100,7 @@ export class ToolRegistry {
       );
     }
     if (BUILTIN_TOOL_NAMES.has(definition.name)) {
-      throw new Error(
-        `Tool name "${definition.name}" is reserved by Zotero MCP`,
-      );
+      throw new Error(`Tool name "${definition.name}" is reserved by Zotero MCP`);
     }
     if (this.tools.has(definition.name)) {
       throw new Error(`Tool "${definition.name}" is already registered`);
@@ -116,40 +109,24 @@ export class ToolRegistry {
     const registered: RegisteredTool = {
       ...definition,
       description: definition.description.trim(),
-      pluginID: definition.pluginID.trim(),
+      pluginID: definition.pluginID?.trim(),
       inputSchema: cloneJsonObject(definition.inputSchema),
       enabled: definition.enabled !== false,
       registeredAt: new Date(),
     };
     this.tools.set(registered.name, registered);
     ztoolkit.log(
-      `[ToolRegistry] Registered ${registered.name} from ${registered.pluginID}`,
+      `[ToolRegistry] Registered ${registered.name}` +
+        (registered.pluginID ? ` from ${registered.pluginID}` : ''),
     );
     this.notifyListeners();
-
-    let active = true;
-    return {
-      name: registered.name,
-      pluginID: registered.pluginID,
-      unregister: () => {
-        if (!active) return false;
-        active = false;
-        return this.unregisterTool(registered.name, registered.pluginID);
-      },
-    };
+    return true;
   }
 
-  unregisterTool(name: string, pluginID: string): boolean {
-    const tool = this.tools.get(name);
-    if (!tool) return false;
-    if (tool.pluginID !== pluginID) {
-      throw new Error(
-        `Plugin "${pluginID}" cannot unregister tool "${name}" owned by "${tool.pluginID}"`,
-      );
-    }
-    this.tools.delete(name);
-    this.notifyListeners();
-    return true;
+  unregisterTool(name: string): boolean {
+    const removed = this.tools.delete(name);
+    if (removed) this.notifyListeners();
+    return removed;
   }
 
   unregisterAllTools(pluginID: string): number {
@@ -252,12 +229,13 @@ export class ToolRegistry {
       );
     }
     if (
-      typeof definition.pluginID !== "string" ||
-      !definition.pluginID.trim() ||
-      definition.pluginID.length > MAX_PLUGIN_ID_LENGTH
+      definition.pluginID !== undefined &&
+      (typeof definition.pluginID !== "string" ||
+        !definition.pluginID.trim() ||
+        definition.pluginID.length > MAX_PLUGIN_ID_LENGTH)
     ) {
       throw new Error(
-        `pluginID is required and must be at most ${MAX_PLUGIN_ID_LENGTH} characters`,
+        `pluginID, when provided, must be a non-empty string of at most ${MAX_PLUGIN_ID_LENGTH} characters`,
       );
     }
     if (

@@ -521,6 +521,11 @@ MCP 服务器已集成在插件内，位于 `src/modules/streamableMCPServer.ts`
 
 ---
 
+
+### 语义搜索界面致谢
+
+Zotero 语义搜索对话框界面及 ZotSeek 衍生图标基于 [introfini/ZotSeek](https://github.com/introfini/ZotSeek)（José Fernandes）修改，遵循 MIT License。
+
 ## 🤝 贡献指南
 
 欢迎贡献代码、报告问题或提出建议！

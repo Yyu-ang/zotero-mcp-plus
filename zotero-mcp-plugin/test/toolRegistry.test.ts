@@ -7,25 +7,22 @@ describe("external tool registry", function () {
     (globalThis as any).ztoolkit = { log: () => undefined };
   });
 
-  it("requires plugin identity and object JSON schema", function () {
+  it("preserves the original optional pluginID API while validating schemas", function () {
     const registry = new ToolRegistry();
-    expect(() =>
-      registry.registerTool({
-        name: "demo_tool",
-        description: "Demo",
-        inputSchema: { type: "object" },
-        handler: () => ({}),
-        pluginID: "",
-      }),
-    ).to.throw("pluginID is required");
+    expect(registry.registerTool({
+      name: "demo_tool",
+      description: "Demo",
+      inputSchema: { type: "object" },
+      handler: () => ({}),
+    })).to.equal(true);
+    expect(registry.unregisterTool("demo_tool")).to.equal(true);
 
     expect(() =>
       registry.registerTool({
-        name: "demo_tool",
+        name: "bad_schema",
         description: "Demo",
         inputSchema: { type: "string" },
         handler: () => ({}),
-        pluginID: "example.plugin",
       }),
     ).to.throw('inputSchema.type must be "object"');
   });
@@ -39,29 +36,23 @@ describe("external tool registry", function () {
           description: "Collision",
           inputSchema: { type: "object" },
           handler: () => ({}),
-          pluginID: "example.plugin",
         }),
       ).to.throw("reserved by Zotero MCP");
     }
   });
 
-  it("returns an ownership-bound unregister handle", function () {
+  it("keeps unregisterTool(name) compatible with cloneorcopy's API", function () {
     const registry = new ToolRegistry();
-    const registration = registry.registerTool({
+    expect(registry.registerTool({
       name: "demo_tool",
       description: "Demo",
       inputSchema: { type: "object" },
       handler: () => ({ ok: true }),
       pluginID: "example.plugin",
-    });
+    })).to.equal(true);
 
-    expect(registry.hasTool("demo_tool")).to.equal(true);
-    expect(() => registry.unregisterTool("demo_tool", "other.plugin")).to.throw(
-      "cannot unregister",
-    );
-    expect(registration.unregister()).to.equal(true);
-    expect(registration.unregister()).to.equal(false);
-    expect(registry.hasTool("demo_tool")).to.equal(false);
+    expect(registry.unregisterTool("demo_tool")).to.equal(true);
+    expect(registry.unregisterTool("demo_tool")).to.equal(false);
   });
 
   it("rejects non-serializable handler results", async function () {
@@ -75,7 +66,6 @@ describe("external tool registry", function () {
         cycle.self = cycle;
         return cycle;
       },
-      pluginID: "example.plugin",
     });
 
     let error: Error | undefined;

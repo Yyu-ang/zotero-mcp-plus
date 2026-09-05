@@ -1,224 +1,352 @@
-import { config } from "../../package.json";
-import {
-  getSemanticSearchService,
-  type SemanticSearchResult,
-} from "./semantic";
-import { getString } from "../utils/locale";
+/**
+ * Semantic Search Dialog for Zotero MCP Plugin
+ *
+ * 参考 ZotSeek 的搜索对话框实现，在 Zotero 中创建一个独立的语义搜索窗口，
+ * 复用 zotero-mcp 原有的向量缓存数据库（VectorStore + EmbeddingService）
+ * 实现搜索，不添加或更改原始数据库。
+ *
+ * 窗口通过 openDialog 打开，UI 逻辑在 searchDialog.xhtml 中内联实现，
+ * TypeScript 控制器负责注入搜索回调。
+ */
 
-const PREF_SEMANTIC_ENABLED =
-  "extensions.zotero.zotero-mcp-plugin.semantic.enabled";
+import { config } from '../../package.json';
+import { VirtualizedTableHelper } from 'zotero-plugin-toolkit';
+import { getString } from '../utils/locale';
+import { getSemanticSearchService, type SemanticSearchResult } from './semantic';
+
+declare let Zotero: any;
+declare let ztoolkit: ZToolkit;
+declare let Services: any;
+
+/** 对话框 chrome URL */
 const DIALOG_URL = `chrome://${config.addonRef}/content/searchDialog.xhtml`;
-const DIALOG_NAME = `${config.addonRef}-semantic-search-dialog`;
-const TOOLBAR_BUTTON_ID = `${config.addonRef}-semantic-search-button`;
-const TOOLBAR_SEPARATOR_ID = `${config.addonRef}-semantic-search-separator`;
-const CONTEXT_MENU_ID = `${config.addonRef}-find-similar`;
-const CONTEXT_MENU_SEPARATOR_ID = `${config.addonRef}-find-similar-separator`;
-const ICON_URL = `chrome://${config.addonRef}/content/icons/favicon@0.5x.png`;
+const DIALOG_NAME = 'zotero-mcp-semantic-search-dialog';
 
+/** 工具栏按钮 ID */
+const TOOLBAR_BUTTON_ID = 'zotero-mcp-semantic-search-button';
+const TOOLBAR_SEPARATOR_ID = 'zotero-mcp-semantic-search-separator';
+
+/** 右键菜单 ID */
+const CONTEXT_MENU_FIND_SIMILAR_ID = 'zotero-mcp-find-similar';
+const CONTEXT_MENU_SEPARATOR_ID = 'zotero-mcp-find-similar-separator';
+
+/** 需要在卸载时清理的 DOM 元素 ID */
 export const SEMANTIC_DIALOG_ELEMENT_IDS = [
   TOOLBAR_BUTTON_ID,
   TOOLBAR_SEPARATOR_ID,
-  CONTEXT_MENU_ID,
+  CONTEXT_MENU_FIND_SIMILAR_ID,
   CONTEXT_MENU_SEPARATOR_ID,
 ];
 
 function semanticEnabled(): boolean {
-  return Zotero.Prefs.get(PREF_SEMANTIC_ENABLED, true) !== false;
+  return Zotero.Prefs.get(
+    'extensions.zotero.zotero-mcp-plugin.semantic.enabled',
+    true,
+  ) !== false;
 }
 
-function dialogStrings(): Record<string, string> {
-  return {
-    title: getString("semantic-search-title" as any),
-    placeholder: getString("semantic-search-placeholder" as any),
-    search: getString("semantic-search-btn" as any),
-    searching: getString("semantic-searching" as any),
-    hint: getString("semantic-search-hint" as any),
-    close: getString("semantic-search-close" as any),
-    noResults: getString("semantic-no-results" as any),
-    searchError: getString("semantic-search-error" as any),
-    score: getString("semantic-search-score" as any),
-    creators: getString("semantic-search-creators" as any),
-    year: getString("semantic-search-year" as any),
-  };
-}
-
+/**
+ * 语义搜索对话框控制器
+ *
+ * 管理 XHTML 窗口的生命周期，向窗口注入三个回调：
+ *  - searchCallback(query) → SemanticSearchResult[]
+ *  - openItemCallback(itemKey) → 在 Zotero 中定位条目
+ *  - findSimilarCallback(itemKey, title) → 查找相似文献
+ */
 export class SemanticSearchDialog {
   private window: any = null;
 
-  open(initialQuery = ""): void {
-    if (!semanticEnabled()) {
-      ztoolkit.log(
-        "[SemanticDialog] Semantic search is disabled; dialog not opened",
-      );
-      return;
-    }
+  /**
+   * 打开搜索对话框（单例，重复调用 focus 已有窗口）
+   * @param initialQuery 可选初始查询，自动填充并搜索
+   */
+  open(initialQuery?: string): void {
+    if (!semanticEnabled()) return;
+    try {
+      if (this.isWindowOpen()) {
+        this.window.focus();
+        // 若有初始查询，注入并自动搜索
+        if (initialQuery) {
+          const queryInput = this.window.document?.getElementById('zotseek-query-1');
+          if (queryInput) {
+            queryInput.value = initialQuery;
+            this.window.performSearch?.();
+          }
+        }
+        return;
+      }
 
-    if (this.isWindowOpen()) {
-      this.window.focus();
-      this.window.setQuery?.(initialQuery);
-      return;
-    }
+      const mainWindow = Zotero.getMainWindow();
 
-    const mainWindow = Zotero.getMainWindow();
-    this.window = mainWindow.openDialog(
-      DIALOG_URL,
-      DIALOG_NAME,
-      "chrome,centerscreen,resizable,dialog=no",
-      {
-        initialQuery,
-        strings: dialogStrings(),
+      // 构建窗口参数
+      const windowArgs = {
+        initialQuery: initialQuery || '',
         searchCallback: (query: string) => this.performSearch(query),
         openItemCallback: (itemKey: string) => this.locateItem(itemKey),
-        findSimilarCallback: (itemKey: string) => this.findSimilar(itemKey),
-      },
-    );
+        findSimilarCallback: (itemKey: string, title: string) =>
+          this.findSimilar(itemKey, title),
+        VirtualizedTableHelper: VirtualizedTableHelper,
+      };
+
+      this.window = mainWindow.openDialog(
+        DIALOG_URL,
+        DIALOG_NAME,
+        'chrome,centerscreen,resizable,dialog=no',
+        windowArgs,
+      );
+
+      ztoolkit.log('[SemanticDialog] Search dialog opened');
+    } catch (error) {
+      ztoolkit.log(
+        `[SemanticDialog] Failed to open dialog: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      );
+    }
   }
 
+  /**
+   * 关闭对话框
+   */
   close(): void {
-    if (this.isWindowOpen()) {
+    if (this.window && !this.window.closed) {
       this.window.close();
     }
     this.window = null;
   }
 
-  async findSimilar(itemKey: string): Promise<void> {
-    if (!semanticEnabled()) return;
-    this.open();
-    await this.waitForWindowReady();
-    this.window?.setBusy?.(true);
-    try {
-      const results = await getSemanticSearchService().findSimilar(itemKey, {
-        topK: 25,
-        minScore: 0.1,
-      });
-      this.window?.displayResults?.(results);
-    } catch (error) {
-      this.window?.showError?.(
-        error instanceof Error ? error.message : String(error),
-      );
-    } finally {
-      this.window?.setBusy?.(false);
-    }
-  }
-
+  /**
+   * 检查窗口是否打开
+   */
   private isWindowOpen(): boolean {
-    if (!this.window || this.window.closed) return false;
-    try {
-      return !Components.utils.isDeadWrapper(this.window);
-    } catch {
-      return false;
-    }
+    return (
+      this.window &&
+      !this.window.closed &&
+      typeof Components !== 'undefined' &&
+      !Components.utils.isDeadWrapper(this.window)
+    );
   }
 
-  private async waitForWindowReady(timeoutMs = 5000): Promise<void> {
-    const started = Date.now();
-    while (this.isWindowOpen() && !this.window?.displayResults) {
-      if (Date.now() - started >= timeoutMs) {
-        throw new Error("Semantic search dialog did not initialize in time");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-
+  /**
+   * 执行语义搜索（注入到窗口的回调）
+   */
   private async performSearch(query: string): Promise<SemanticSearchResult[]> {
-    const normalized = query.trim();
-    if (!normalized) return [];
-    return getSemanticSearchService().search(normalized, {
+    ztoolkit.log(`[SemanticDialog] Performing search: "${query}"`);
+
+    const service = getSemanticSearchService();
+    const results = await service.search(query, {
       topK: 50,
       minScore: 0.1,
     });
+
+    ztoolkit.log(`[SemanticDialog] Found ${results.length} results`);
+    return results;
   }
 
-  private async locateItem(itemKey: string): Promise<void> {
-    const pane = Zotero.getActiveZoteroPane();
-    if (!pane) return;
-
-    for (const library of Zotero.Libraries.getAll()) {
-      const item = await Zotero.Items.getByLibraryAndKeyAsync(
-        library.libraryID,
-        itemKey,
-      );
-      if (item) {
-        await pane.selectItem(item.id);
-        return;
-      }
-    }
+  /**
+   * 查找与指定条目相似的文献
+   */
+  async findSimilar(itemKey: string, title?: string): Promise<void> {
+    if (!semanticEnabled()) return;
+    // 确保对话框打开
+    this.open();
 
     ztoolkit.log(
-      `[SemanticDialog] Could not locate item ${itemKey} in any library`,
-      "warn",
+      `[SemanticDialog] Finding similar to: ${title || itemKey}`,
     );
+
+    // 等待窗口初始化
+    await this.waitForWindowReady();
+
+    // 更新进度提示
+    this.window?.showProgress?.('Finding similar documents...');
+
+    try {
+      const service = getSemanticSearchService();
+      const results = await service.findSimilar(itemKey, { topK: 15 });
+
+      // 通过窗口暴露的 displayResults 更新结果
+      this.window?.displayResults?.(results);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.window?.showError?.('Search failed: ' + msg);
+      ztoolkit.log(`[SemanticDialog] FindSimilar error: ${msg}`, 'error');
+    }
+  }
+
+  /**
+   * 等待窗口 DOM 及内联脚本就绪
+   */
+  private waitForWindowReady(): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.window) return resolve();
+      // 检查内联脚本是否已执行（performSearch 在脚本末尾暴露到 window）
+      if ((this.window as any).performSearch) {
+        return resolve();
+      }
+      // 轮询等待
+      const check = () => {
+        if ((this.window as any)?.performSearch) {
+          resolve();
+        } else {
+          setTimeout(check, 100);
+        }
+      };
+      setTimeout(check, 100);
+    });
+  }
+
+  /**
+   * 在 Zotero 条目列表中定位条目（注入到窗口的回调）
+   */
+  private async locateItem(itemKey: string): Promise<void> {
+    try {
+      const win = Zotero.getActiveZoteroPane();
+      if (!win) return;
+
+      for (const library of Zotero.Libraries.getAll()) {
+        const item = await Zotero.Items.getByLibraryAndKeyAsync(
+          library.libraryID,
+          itemKey,
+        );
+        if (item) {
+          await win.selectItem(item.id);
+          return;
+        }
+      }
+      ztoolkit.log(
+        `[SemanticDialog] Failed to locate item ${itemKey} in any library`,
+        'warn',
+      );
+    } catch (e) {
+      ztoolkit.log(`[SemanticDialog] Failed to locate item ${itemKey}: ${e}`, 'warn');
+    }
   }
 }
+
+// ============ 单例 ============
 
 let dialogInstance: SemanticSearchDialog | null = null;
 
 export function getSemanticSearchDialog(): SemanticSearchDialog {
-  if (!dialogInstance) dialogInstance = new SemanticSearchDialog();
+  if (!dialogInstance) {
+    dialogInstance = new SemanticSearchDialog();
+  }
   return dialogInstance;
 }
 
-export function registerSemanticSearchToolbar(
-  win: _ZoteroTypes.MainWindow,
-): void {
+// ============ UI 注册函数 ============
+
+/**
+ * 在 Zotero 主工具栏注册语义搜索按钮。
+ * 参考 ZotSeek 实现：使用 #zotero-items-toolbar 容器，
+ * 插入到搜索框之前。
+ */
+export function registerSemanticSearchToolbar(win: _ZoteroTypes.MainWindow): void {
   const doc = win.document;
+
+  // 先清理已有
   doc.getElementById(TOOLBAR_BUTTON_ID)?.remove();
   doc.getElementById(TOOLBAR_SEPARATOR_ID)?.remove();
+
   if (!semanticEnabled()) return;
 
-  const toolbar = doc.getElementById("zotero-items-toolbar");
-  if (!toolbar) return;
+  // 查找条目工具栏（Zotero 的正确 ID）
+  const toolbar = doc.getElementById('zotero-items-toolbar');
+  if (!toolbar) {
+    ztoolkit.log('[SemanticDialog] zotero-items-toolbar not found, skipping button registration');
+    return;
+  }
 
-  const button = doc.createXULElement("toolbarbutton");
-  button.id = TOOLBAR_BUTTON_ID;
-  button.setAttribute("label", getString("semantic-search-short-label" as any));
-  button.setAttribute(
-    "tooltiptext",
-    getString("semantic-search-tooltip" as any),
-  );
-  button.setAttribute("class", "zotero-tb-button");
-  (button as any).style.listStyleImage = `url("${ICON_URL}")`;
-  button.addEventListener("command", () => getSemanticSearchDialog().open());
-
-  const separator = doc.createXULElement("toolbarseparator");
+  // 创建分隔线
+  const separator = doc.createXULElement('toolbarseparator');
   separator.id = TOOLBAR_SEPARATOR_ID;
-  const searchBox = toolbar.querySelector("#zotero-tb-search");
-  toolbar.insertBefore(button, searchBox || null);
-  toolbar.insertBefore(separator, searchBox || null);
+
+  // 创建按钮
+  const button = doc.createXULElement('toolbarbutton');
+  button.id = TOOLBAR_BUTTON_ID;
+  button.setAttribute('label', getString('semantic-search-short-label' as any));
+  button.setAttribute('tooltiptext', getString('semantic-search-tooltip' as any));
+  button.setAttribute('class', 'zotero-tb-button');
+
+  // 使用 ZotSeek 风格的大脑+放大镜图标
+  (button as any).style.listStyleImage = `url("chrome://${config.addonRef}/content/icons/icon-toolbar.svg")`;
+
+  button.addEventListener('command', () => {
+    getSemanticSearchDialog().open();
+  });
+
+  // 插入到搜索框之前，没有搜索框则追加到末尾
+  const searchBox = toolbar.querySelector('#zotero-tb-search');
+  if (searchBox) {
+    toolbar.insertBefore(separator, searchBox);
+    toolbar.insertBefore(button, separator);
+  } else {
+    toolbar.appendChild(button);
+    toolbar.appendChild(separator);
+  }
+
+  ztoolkit.log('[SemanticDialog] Toolbar button registered');
 }
 
+/**
+ * 在条目右键菜单注册"查找相似文献"
+ */
 export function registerFindSimilarMenu(win: _ZoteroTypes.MainWindow): void {
   const doc = win.document;
-  doc.getElementById(CONTEXT_MENU_ID)?.remove();
+
+  // 先清理
+  doc.getElementById(CONTEXT_MENU_FIND_SIMILAR_ID)?.remove();
   doc.getElementById(CONTEXT_MENU_SEPARATOR_ID)?.remove();
+
   if (!semanticEnabled()) return;
 
-  const itemMenu = doc.getElementById("zotero-itemmenu");
-  if (!itemMenu) return;
+  const itemMenu = doc.getElementById('zotero-itemmenu');
+  if (!itemMenu) {
+    ztoolkit.log('[SemanticDialog] Item menu not found, skipping find-similar registration');
+    return;
+  }
 
-  const separator = doc.createXULElement("menuseparator");
+  // 分隔线
+  const separator = doc.createXULElement('menuseparator');
   separator.id = CONTEXT_MENU_SEPARATOR_ID;
-  const menuItem = doc.createXULElement("menuitem");
-  menuItem.id = CONTEXT_MENU_ID;
-  menuItem.setAttribute("label", getString("menu-find-similar" as any));
-  menuItem.addEventListener("command", async () => {
-    const selected = win.ZoteroPane?.getSelectedItems?.() || [];
-    const item = selected[0];
-    if (item?.key) await getSemanticSearchDialog().findSimilar(item.key);
+
+  // 菜单项
+  const menuItem = doc.createXULElement('menuitem');
+  menuItem.id = CONTEXT_MENU_FIND_SIMILAR_ID;
+  menuItem.setAttribute('label', getString('menu-find-similar' as any));
+  menuItem.addEventListener('command', async () => {
+    const zoteroPane = win.ZoteroPane;
+    if (!zoteroPane) return;
+
+    const selectedItems = zoteroPane.getSelectedItems();
+    if (!selectedItems || selectedItems.length === 0) return;
+
+    const item = selectedItems[0];
+    const title = item.getDisplayTitle?.() || '';
+    getSemanticSearchDialog().findSimilar(item.key, title);
   });
 
   itemMenu.appendChild(separator);
   itemMenu.appendChild(menuItem);
+  ztoolkit.log('[SemanticDialog] Find-similar context menu registered');
 }
 
+/**
+ * 卸载所有 UI 元素
+ */
 export function unregisterSemanticSearchUI(win: Window): void {
   try {
+    const doc = (win as any).document;
+    if (!doc) return;
+
+    // 关闭对话框
     getSemanticSearchDialog().close();
-    const doc = win.document;
+
+    // 移除 UI 元素
     for (const id of SEMANTIC_DIALOG_ELEMENT_IDS) {
       doc.getElementById(id)?.remove();
     }
   } catch {
-    // Window may already be torn down.
+    // window may already be gone
   }
 }

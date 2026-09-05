@@ -1140,7 +1140,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'export_bibliography',
-        description: 'Export one or more Zotero items as BibLaTeX/BibTeX (or CSL-JSON/CSL-YAML) entries using Better BibTeX. Requires Better BibTeX to be installed and running.',
+        description: 'Export one or more Zotero items as BibLaTeX/BibTeX (or CSL-JSON/CSL-YAML) entries powered by the zotero-better-bibtex (BBT) plugin. Requires Better BibTeX to be installed and running in Zotero. Use search_library first to find itemKeys, then pass them here. Returns the exported bibliography text (e.g. @article{...} entries).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1156,7 +1156,15 @@ export class StreamableMCPServer {
             format: {
               type: 'string',
               enum: ['biblatex', 'bibtex', 'csljson', 'cslyaml'],
-              description: 'Export format. Defaults to biblatex.'
+              description: 'Export format. biblatex = Better BibLaTeX (default), bibtex = Better BibTeX, csljson = Better CSL JSON, cslyaml = Better CSL YAML.'
+            },
+            exportNotes: {
+              type: 'boolean',
+              description: 'Include item notes in the export (default: false)'
+            },
+            useJournalAbbreviation: {
+              type: 'boolean',
+              description: 'Use journal abbreviation instead of full name (default: false)'
             }
           },
           required: ['itemKeys']
@@ -1164,7 +1172,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'get_citation',
-        description: 'Generate a formatted bibliography entry or in-text citation using a CSL style. If style is omitted, uses the Zotero default Quick Copy style. Uses Zotero native citeproc and does not require Better BibTeX.',
+        description: 'Generate a formatted reference (bibliography entry) or in-text citation for one or more items using a CSL citation style. If no style is specified, uses the Zotero default Quick Copy style. Use list_citation_styles to discover available styles. Works without Better BibTeX (uses Zotero native citeproc).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1179,17 +1187,17 @@ export class StreamableMCPServer {
             },
             style: {
               type: 'string',
-              description: 'Optional CSL style ID or title, e.g. "apa", "ieee", or a full Zotero style URL.'
+              description: 'Optional CSL style ID or title, e.g. "apa", "ieee", "http://www.zotero.org/styles/american-medical-association". Omit to use the Zotero default Quick Copy style.'
             },
             contentType: {
               type: 'string',
               enum: ['html', 'text'],
-              description: 'Output content type. Defaults to html.'
+              description: 'Output content type: html (default) or plain text.'
             },
             mode: {
               type: 'string',
               enum: ['bibliography', 'citation'],
-              description: 'bibliography for full references or citation for in-text citations. Defaults to bibliography.'
+              description: 'Generation mode: bibliography (default, full reference entry) or citation (in-text citation).'
             }
           },
           required: ['itemKeys']
@@ -1197,15 +1205,15 @@ export class StreamableMCPServer {
       },
       {
         name: 'list_citation_styles',
-        description: 'List CSL citation styles available in Zotero for use with get_citation. Supports optional keyword filtering.',
+        description: 'List CSL citation styles available in Zotero (for use with get_citation). Each entry includes an id (styleID) and a human-readable title. Supports optional keyword filtering.',
         inputSchema: {
           type: 'object',
           properties: {
             filter: {
               type: 'string',
-              description: 'Optional case-insensitive keyword to filter styles by title or ID.'
+              description: 'Optional case-insensitive keyword to filter styles by title or id (e.g. "apa", "ieee", "chicago")'
             }
-          }
+          },
         }
       },
       {
@@ -1215,7 +1223,7 @@ export class StreamableMCPServer {
           type: 'object',
           properties: {
             bibPath: { type: 'string', description: 'Absolute path to the target .bib file.' },
-            format: { type: 'string', enum: ['bibtex', 'biblatex'], description: 'Bibliography format (default: bibtex).' },
+            format: { type: 'string', enum: ['bibtex', 'biblatex', 'csljson', 'cslyaml'], description: 'Export format. bibtex is the default.' },
             libraryID: { type: 'number', description: 'Optional Zotero library ID.' },
             includeChildren: { type: 'boolean', description: 'Include child regular items when collecting library items (default: false).' },
             overwrite: { type: 'boolean', description: 'Required true to replace an existing .bib file (default: false).' },
@@ -1231,12 +1239,11 @@ export class StreamableMCPServer {
           type: 'object',
           properties: {
             itemKey: { type: 'string', description: 'Exact Zotero item key. Prefer this over query.' },
-            query: { type: 'string', description: 'Title/creator query; must resolve to exactly one item.' },
+            query: { type: 'string', description: 'Search query matching title/creator names. If multiple items match, the first match is used.' },
             bibPath: { type: 'string', description: 'Absolute .bib path. Created if absent; existing entries are preserved.' },
-            texPath: { type: 'string', description: 'Absolute path to an existing .tex draft. Mutually exclusive with markdownPath.' },
-            markdownPath: { type: 'string', description: 'Absolute path to an existing .md/.markdown draft. Mutually exclusive with texPath.' },
-            marker: { type: 'string', description: 'Marker text to replace with the citation.' },
-            append: { type: 'boolean', description: 'Set true to explicitly append when marker is omitted.' },
+            texPath: { type: 'string', description: 'Absolute path to a .tex draft. If both draft paths are supplied, texPath is used.' },
+            markdownPath: { type: 'string', description: 'Absolute path to a .md/.markdown draft.' },
+            marker: { type: 'string', description: 'Marker text to replace; when omitted, append the citation at the end of the draft.' },
             libraryID: { type: 'number', description: 'Optional Zotero library ID.' }
           },
           required: ['bibPath']
@@ -1565,15 +1572,29 @@ export class StreamableMCPServer {
           result = await this.callListCitationStyles(args);
           break;
 
-        case 'sync_bib':
+        case 'sync_bib': {
           this.assertCitationFileToolsEnabled();
+          if (!args?.bibPath) {
+            throw new Error('bibPath is required (absolute path to the output .bib file)');
+          }
           result = await this.callSyncBib(args);
           break;
+        }
 
-        case 'cite':
+        case 'cite': {
           this.assertCitationFileToolsEnabled();
+          if (!args?.bibPath) {
+            throw new Error('bibPath is required (path to the .bib file)');
+          }
+          if (!args?.itemKey && !args?.query) {
+            throw new Error('Either itemKey or query is required');
+          }
+          if (!args?.texPath && !args?.markdownPath) {
+            throw new Error('Either texPath or markdownPath is required');
+          }
           result = await this.callCite(args);
           break;
+        }
 
         default: {
           const registry = getToolRegistry();
@@ -1991,10 +2012,13 @@ export class StreamableMCPServer {
   }
 
   private async callExportBibliography(args: any): Promise<any> {
-    return this.getCitationExportService().exportBibliography({
+    const service = this.getCitationExportService();
+    return service.exportBibliography({
       itemKeys: args.itemKeys,
       format: args.format,
       libraryID: args.libraryID,
+      exportNotes: args.exportNotes,
+      useJournalAbbreviation: args.useJournalAbbreviation,
     });
   }
 
@@ -2040,7 +2064,6 @@ export class StreamableMCPServer {
       texPath: args?.texPath,
       markdownPath: args?.markdownPath,
       marker: args?.marker,
-      append: args?.append,
       libraryID: args?.libraryID,
     });
   }
