@@ -1,0 +1,66 @@
+name: PR92 audited integration
+
+on:
+  push:
+    branches:
+      - 'review/pr92-audited-integration'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: review/pr92-audited-integration
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: zotero-mcp-plugin/package-lock.json
+
+      - name: Apply audited fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git cherry-pick 52a8c25423fe22339966bd20e999803ad6f67c9a
+          git cherry-pick 1c1ccf78ec3de4b473f7164330c3f22eba58eb50
+          git cherry-pick 23876ceed97a165d76b9fe22fb1c4cd36e17aa51
+          git cherry-pick 3793b80edb0f776561be51c29126f98f1a24f255
+
+      - name: Verify behavior-preserving scope
+        shell: bash
+        run: |
+          test "$(git rev-list --count c616d620427cbbd075d48caf6560ddd9c9f72728..HEAD)" -eq 5
+          grep -q 'findSimilar(itemKey, { topK: 15 })' zotero-mcp-plugin/src/modules/semanticSearchDialog.ts
+          grep -q 'VirtualizedTableHelper' zotero-mcp-plugin/src/modules/semanticSearchDialog.ts
+          grep -q 'pluginID?: string' zotero-mcp-plugin/src/modules/toolRegistry.ts
+          grep -q 'registerTool(def: ExternalToolDefinition): boolean' zotero-mcp-plugin/src/modules/toolRegistry.ts
+          grep -q 'unregisterTool(name: string): boolean' zotero-mcp-plugin/src/modules/toolRegistry.ts
+          grep -q "'csljson'" zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          grep -q "'cslyaml'" zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+
+      - name: Build and run all regression tests
+        shell: bash
+        run: |
+          cd zotero-mcp-plugin
+          npm ci
+          npm run build
+          npm test
+          echo '--- generated XPI candidates ---'
+          find . -type f -name '*.xpi' -printf '%p %s bytes\n' | sort
+          cd ..
+          git diff --check c616d620427cbbd075d48caf6560ddd9c9f72728..HEAD
+
+      - name: Remove temporary workflow and publish integration branch
+        shell: bash
+        run: |
+          rm .github/workflows/pr92-audited-integration.yml
+          git add -u .github/workflows/pr92-audited-integration.yml
+          git commit -m "ci: remove temporary integration workflow"
+          git push origin HEAD:review/pr92-audited-integration
