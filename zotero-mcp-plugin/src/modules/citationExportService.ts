@@ -18,6 +18,8 @@
  *   - Zotero.Styles.getVisible() / Zotero.Styles.get(styleID)
  */
 
+import { assertSafeCitationFilePath } from "./citationFileSafety";
+
 declare let ztoolkit: ZToolkit;
 declare const IOUtils: any;
 
@@ -50,7 +52,7 @@ export class CitationExportService {
    * @param params 位置参数数组
    * @returns result 字段
    */
-  private async bbtRpc(method: string, params: any[] = []): Promise<any> {
+  private async bbtRpc(method: string, params: any[] = [], timeoutMs: number = 30000): Promise<any> {
     const body = JSON.stringify({
       jsonrpc: "2.0",
       method,
@@ -70,7 +72,7 @@ export class CitationExportService {
           "Zotero-Allowed-Request": "1",
         },
         body,
-        timeout: 30000,
+        timeout: timeoutMs,
         responseType: "json",
       });
     } catch (e) {
@@ -96,14 +98,14 @@ export class CitationExportService {
   /**
    * 检测 Better BibTeX 是否安装且 JSON-RPC 可用。
    */
-  async checkBBT(): Promise<{
+  async checkBBT(timeoutMs: number = 30000): Promise<{
     available: boolean;
     betterbibtexVersion?: string;
     zoteroVersion?: string;
     error?: string;
   }> {
     try {
-      const result = await this.bbtRpc("api.ready", []);
+      const result = await this.bbtRpc("api.ready", [], timeoutMs);
       return {
         available: true,
         betterbibtexVersion: result?.betterbibtex ?? UNKNOWN,
@@ -125,6 +127,7 @@ export class CitationExportService {
   async resolveCitekeys(
     itemKeys: string[],
     libraryID?: number,
+    timeoutMs: number = 30000,
   ): Promise<{
     citekeys: string[];
     map: Record<string, string>;
@@ -135,7 +138,7 @@ export class CitationExportService {
       libraryID !== undefined && libraryID !== null ? `${libraryID}:${k}` : k,
     );
 
-    const result = (await this.bbtRpc("item.citationkey", [keyStrings])) ?? {};
+    const result = (await this.bbtRpc("item.citationkey", [keyStrings], timeoutMs)) ?? {};
 
     const map: Record<string, string> = {};
     const citekeys: string[] = [];
@@ -171,6 +174,7 @@ export class CitationExportService {
     libraryID?: number;
     exportNotes?: boolean;
     useJournalAbbreviation?: boolean;
+    timeoutMs?: number;
   }): Promise<any> {
     const {
       itemKeys,
@@ -178,6 +182,7 @@ export class CitationExportService {
       libraryID,
       exportNotes = false,
       useJournalAbbreviation = false,
+      timeoutMs = 30000,
     } = params;
 
     if (!itemKeys || itemKeys.length === 0) {
@@ -189,7 +194,7 @@ export class CitationExportService {
       BBT_TRANSLATORS[normalizedFormat] ?? BBT_TRANSLATORS.biblatex;
 
     // 1) 先校验 BBT 可用性，给出友好错误
-    const bbtStatus = await this.checkBBT();
+    const bbtStatus = await this.checkBBT(timeoutMs);
     if (!bbtStatus.available) {
       throw new Error(
         `导出 ${normalizedFormat} 需要 Better BibTeX 插件支持，但当前不可用：${bbtStatus.error ?? "未知原因"}`,
@@ -200,6 +205,7 @@ export class CitationExportService {
     const { citekeys, missing } = await this.resolveCitekeys(
       itemKeys,
       libraryID,
+      timeoutMs,
     );
     if (citekeys.length === 0) {
       throw new Error(
@@ -216,7 +222,7 @@ export class CitationExportService {
 
     let exportString: string;
     try {
-      exportString = await this.bbtRpc("item.export", rpcParams);
+      exportString = await this.bbtRpc("item.export", rpcParams, timeoutMs);
     } catch (e) {
       // BBT item.export 可能不支持 displayOptions，作为独立提示
       throw new Error(
@@ -354,7 +360,7 @@ export class CitationExportService {
           `未找到引文样式 "${style}"。请使用 list_citation_styles 查看可用样式。`,
         );
       }
-      format = `${mode}=${resolved.styleID}`;
+      format = `bibliography=${resolved.styleID}`;
       styleInfo = {
         id: resolved.styleID,
         title: resolved.title,
@@ -362,25 +368,22 @@ export class CitationExportService {
         hasBibliography: resolved.hasBibliography,
       };
     } else {
-      // 使用 Zotero 默认 Quick Copy 设置
+      // 使用 Zotero 默认 Quick Copy 设置。通过 Zotero 自己的解析器处理
+      // bibliography/html=STYLE 等合法格式。
       const defaultSetting =
         (Zotero.Prefs.get("export.quickCopy.setting") as string) || "";
-      const prefix = defaultSetting.split("=")[0];
+      const parsedSetting = (Zotero.QuickCopy as any).unserializeSetting(
+        defaultSetting,
+      );
 
-      if (
-        defaultSetting &&
-        (prefix === "bibliography" || prefix === "citation")
-      ) {
-        // 默认设置本身就是引文格式，按需调整前缀以匹配请求模式
-        const styleIdPart = defaultSetting.substring(
-          defaultSetting.indexOf("=") + 1,
-        );
-        format = `${mode}=${styleIdPart}`;
+      if (parsedSetting?.mode === "bibliography" && parsedSetting?.id) {
+        const styleIdPart = parsedSetting.id;
+        format = `bibliography=${styleIdPart}`;
         styleInfo = { isDefault: true, id: styleIdPart };
       } else {
         // 默认设置非引文格式，回退到 APA
         const fallback = "http://www.zotero.org/styles/apa";
-        format = `${mode}=${fallback}`;
+        format = `bibliography=${fallback}`;
         styleInfo = { isDefault: true, id: fallback, title: "APA (fallback)" };
       }
     }
@@ -394,7 +397,7 @@ export class CitationExportService {
         (Zotero.QuickCopy as any).getContentFromItems(
           items,
           format,
-          lib,
+          undefined,
           asCitations,
         ),
       );
@@ -563,13 +566,30 @@ export class CitationExportService {
     format?: string;
     libraryID?: number;
     includeChildren?: boolean;
+    overwrite?: boolean;
+    timeoutMs?: number;
   }): Promise<any> {
     const {
-      bibPath,
       format = 'bibtex',
       libraryID,
       includeChildren = false,
+      overwrite = false,
+      timeoutMs = 30000,
     } = params;
+    const bibPath = assertSafeCitationFilePath(
+      params.bibPath,
+      ['.bib'],
+      'bibPath',
+    );
+
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 600000) {
+      throw new Error('timeoutMs must be an integer between 1000 and 600000');
+    }
+    if ((await IOUtils.exists(bibPath)) && !overwrite) {
+      throw new Error(
+        `Refusing to overwrite existing bibliography: ${bibPath}. Set overwrite=true to replace it.`,
+      );
+    }
 
     const lib =
       libraryID !== undefined && libraryID !== null
@@ -583,11 +603,13 @@ export class CitationExportService {
       throw new Error('No items found in the library to export.');
     }
 
-    // 2) Export via BBT
+    // 2) Export via BBT. Keep the original single-export semantics for all
+    // formats; timeoutMs makes the previous fixed 30s RPC timeout configurable.
     const exportResult = await this.exportBibliography({
       itemKeys,
       format,
       libraryID: lib,
+      timeoutMs,
     });
 
     const content = exportResult.content || '';
@@ -636,12 +658,19 @@ export class CitationExportService {
     const {
       itemKey,
       query,
-      bibPath,
+      bibPath: rawBibPath,
       texPath,
       markdownPath,
       marker,
       libraryID,
     } = params;
+
+    const bibPath = assertSafeCitationFilePath(rawBibPath, ['.bib'], 'bibPath');
+    const draftPath = texPath
+      ? assertSafeCitationFilePath(texPath, ['.tex'], 'texPath')
+      : markdownPath
+        ? assertSafeCitationFilePath(markdownPath, ['.md', '.markdown'], 'markdownPath')
+        : undefined;
 
     const lib =
       libraryID !== undefined && libraryID !== null
@@ -704,7 +733,6 @@ export class CitationExportService {
       ? `\\cite{${citekey}}`
       : `[@${citekey}]`;
 
-    const draftPath = texPath || markdownPath;
     if (!draftPath) {
       throw new Error('Either texPath or markdownPath must be provided');
     }

@@ -7,9 +7,13 @@
  *
  * 窗口通过 openDialog 打开，UI 逻辑在 searchDialog.xhtml 中内联实现，
  * TypeScript 控制器负责注入搜索回调。
+ *
+ * UI adapted from ZotSeek (https://github.com/introfini/ZotSeek), MIT License.
  */
 
 import { VirtualizedTableHelper } from 'zotero-plugin-toolkit';
+import { config } from '../../package.json';
+import { getString } from '../utils/locale';
 import { getSemanticSearchService, type SemanticSearchResult } from './semantic';
 
 declare let Zotero: any;
@@ -17,7 +21,7 @@ declare let ztoolkit: ZToolkit;
 declare let Services: any;
 
 /** 对话框 chrome URL */
-const DIALOG_URL = 'chrome://zotero-mcp-plugin/content/searchDialog.xhtml';
+const DIALOG_URL = `chrome://${config.addonRef}/content/searchDialog.xhtml`;
 const DIALOG_NAME = 'zotero-mcp-semantic-search-dialog';
 
 /** 工具栏按钮 ID */
@@ -187,17 +191,20 @@ export class SemanticSearchDialog {
   /**
    * 在 Zotero 条目列表中定位条目（注入到窗口的回调）
    */
-  private locateItem(itemKey: string): void {
+  private async locateItem(itemKey: string): Promise<void> {
     try {
       const win = Zotero.getActiveZoteroPane();
       if (!win) return;
 
-      const item = Zotero.Items.getByLibraryAndKey(
-        Zotero.Libraries.userLibraryID,
-        itemKey,
-      );
-      if (item) {
-        win.selectItem(item.id);
+      for (const library of Zotero.Libraries.getAll()) {
+        const item = await Zotero.Items.getByLibraryAndKeyAsync(
+          library.libraryID,
+          itemKey,
+        );
+        if (item) {
+          await Promise.resolve(win.selectItem(item.id));
+          return;
+        }
       }
     } catch (e) {
       ztoolkit.log(`[SemanticDialog] Failed to locate item ${itemKey}: ${e}`, 'warn');
@@ -226,6 +233,13 @@ export function getSemanticSearchDialog(): SemanticSearchDialog {
 export function registerSemanticSearchToolbar(win: _ZoteroTypes.MainWindow): void {
   const doc = win.document;
 
+  const semanticEnabled = Zotero.Prefs.get('extensions.zotero.zotero-mcp-plugin.semantic.enabled', true);
+  if (semanticEnabled === false) {
+    doc.getElementById(TOOLBAR_BUTTON_ID)?.remove();
+    doc.getElementById(TOOLBAR_SEPARATOR_ID)?.remove();
+    return;
+  }
+
   // 先清理已有
   doc.getElementById(TOOLBAR_BUTTON_ID)?.remove();
   doc.getElementById(TOOLBAR_SEPARATOR_ID)?.remove();
@@ -244,12 +258,12 @@ export function registerSemanticSearchToolbar(win: _ZoteroTypes.MainWindow): voi
   // 创建按钮
   const button = doc.createXULElement('toolbarbutton');
   button.id = TOOLBAR_BUTTON_ID;
-  button.setAttribute('label', 'SS');
-  button.setAttribute('tooltiptext', 'Semantic Search');
+  button.setAttribute('label', getString('semantic-search-title'));
+  button.setAttribute('tooltiptext', getString('semantic-search-tooltip'));
   button.setAttribute('class', 'zotero-tb-button');
 
   // 使用 ZotSeek 风格的大脑+放大镜图标
-  (button as any).style.listStyleImage = 'url("chrome://zotero-mcp-plugin/content/icons/icon-toolbar.svg")';
+  (button as any).style.listStyleImage = `url("chrome://${config.addonRef}/content/icons/icon-toolbar.svg")`;
 
   button.addEventListener('command', () => {
     getSemanticSearchDialog().open();
@@ -274,6 +288,13 @@ export function registerSemanticSearchToolbar(win: _ZoteroTypes.MainWindow): voi
 export function registerFindSimilarMenu(win: _ZoteroTypes.MainWindow): void {
   const doc = win.document;
 
+  const semanticEnabled = Zotero.Prefs.get('extensions.zotero.zotero-mcp-plugin.semantic.enabled', true);
+  if (semanticEnabled === false) {
+    doc.getElementById(CONTEXT_MENU_FIND_SIMILAR_ID)?.remove();
+    doc.getElementById(CONTEXT_MENU_SEPARATOR_ID)?.remove();
+    return;
+  }
+
   // 先清理
   doc.getElementById(CONTEXT_MENU_FIND_SIMILAR_ID)?.remove();
   doc.getElementById(CONTEXT_MENU_SEPARATOR_ID)?.remove();
@@ -291,7 +312,7 @@ export function registerFindSimilarMenu(win: _ZoteroTypes.MainWindow): void {
   // 菜单项
   const menuItem = doc.createXULElement('menuitem');
   menuItem.id = CONTEXT_MENU_FIND_SIMILAR_ID;
-  menuItem.setAttribute('label', 'Find Similar Documents');
+  menuItem.setAttribute('label', getString('menu-find-similar'));
   menuItem.addEventListener('command', async () => {
     const zoteroPane = win.ZoteroPane;
     if (!zoteroPane) return;
