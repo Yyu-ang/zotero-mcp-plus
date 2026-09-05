@@ -25,17 +25,9 @@ jobs:
         run: |
           set -euo pipefail
           git worktree add /tmp/pr92-base c616d620427cbbd075d48caf6560ddd9c9f72728
-          (
-            cd /tmp/pr92-base/zotero-mcp-plugin
-            npm ci
-            npm run build
-          )
-          (
-            cd zotero-mcp-plugin
-            npm ci
-            npm run build
-          )
-      - name: Download and unpack cloneorcopy 1.5.2 release XPI
+          (cd /tmp/pr92-base/zotero-mcp-plugin && npm ci && npm run build)
+          (cd zotero-mcp-plugin && npm ci && npm run build)
+      - name: Download cloneorcopy 1.5.2 release XPI
         shell: bash
         run: |
           set -euo pipefail
@@ -44,107 +36,73 @@ jobs:
             -o /tmp/cloneorcopy-1.5.2.xpi
           mkdir -p /tmp/cloneorcopy-release
           unzip -q /tmp/cloneorcopy-1.5.2.xpi -d /tmp/cloneorcopy-release
-          echo '=== release semantic assets ==='
-          find /tmp/cloneorcopy-release -type f \( -name 'searchDialog.xhtml' -o -name 'searchDialog.css' -o -name 'zotero-mcp-plugin.js' \) -print
-          echo '=== release tree top ==='
-          find /tmp/cloneorcopy-release -maxdepth 3 -type f | sort | head -80
-      - name: Compare built main, integration, and release semantic dialog assets
+      - name: Compare release, rebuilt main, and integration UI/runtime
         shell: python
         run: |
           from pathlib import Path
           import re, hashlib, difflib
 
-          base_dir = Path('/tmp/pr92-base/zotero-mcp-plugin/.scaffold/build/addon/content')
-          new_dir = Path('zotero-mcp-plugin/.scaffold/build/addon/content')
-          release_root = Path('/tmp/cloneorcopy-release')
-          release_xhtmls = list(release_root.rglob('searchDialog.xhtml'))
-          release_csses = list(release_root.rglob('searchDialog.css'))
-          print('release xhtml paths:', [str(p) for p in release_xhtmls])
-          print('release css paths:', [str(p) for p in release_csses])
-          if not release_xhtmls or not release_csses:
-              raise AssertionError('Release XPI does not contain semantic search dialog assets')
+          base_content = Path('/tmp/pr92-base/zotero-mcp-plugin/.scaffold/build/addon/content')
+          new_content = Path('zotero-mcp-plugin/.scaffold/build/addon/content')
+          rel_content = Path('/tmp/cloneorcopy-release/content')
 
-          files = {
-              'main_xhtml': base_dir / 'searchDialog.xhtml',
-              'integration_xhtml': new_dir / 'searchDialog.xhtml',
-              'release_xhtml': release_xhtmls[0],
-              'main_css': base_dir / 'searchDialog.css',
-              'integration_css': new_dir / 'searchDialog.css',
-              'release_css': release_csses[0],
-          }
-          for name, path in files.items():
-              data = path.read_bytes()
-              print(name, 'size=', len(data), 'sha256=', hashlib.sha256(data).hexdigest())
+          def sha(p):
+              return hashlib.sha256(p.read_bytes()).hexdigest()
 
-          main = files['main_xhtml'].read_text()
-          new = files['integration_xhtml'].read_text()
-          rel = files['release_xhtml'].read_text()
-          main_css = files['main_css'].read_text()
-          new_css = files['integration_css'].read_text()
-          rel_css = files['release_css'].read_text()
+          for relpath in ['searchDialog.xhtml', 'searchDialog.css']:
+              rp = rel_content / relpath
+              bp = base_content / relpath
+              np = new_content / relpath
+              print(relpath, 'release==main exact', rp.read_bytes() == bp.read_bytes())
+              print(relpath, 'release_sha', sha(rp), 'main_sha', sha(bp), 'integration_sha', sha(np))
 
-          def normalize_xhtml(s: str) -> str:
-              s = re.sub(r'<!-- Semantic search dialog UI adapted from ZotSeek.*?-->\n?', '', s)
+          rel_js = (rel_content / 'scripts/zotero-mcp-plugin.js').read_text()
+          base_js = (base_content / 'scripts/zotero-mcp-plugin.js').read_text()
+          new_js = (new_content / 'scripts/zotero-mcp-plugin.js').read_text()
+          print('JS sizes release/main/integration:', len(rel_js), len(base_js), len(new_js))
+          print('JS sha release:', hashlib.sha256(rel_js.encode()).hexdigest())
+          print('JS sha main:', hashlib.sha256(base_js.encode()).hexdigest())
+          print('JS sha integration:', hashlib.sha256(new_js.encode()).hexdigest())
+
+          def normalize_build_metadata(s: str) -> str:
+              s = re.sub(r'buildTime:\s*"[^"]*"', 'buildTime:"<BUILD_TIME>"', s)
+              s = re.sub(r'buildTime:\s*\x27[^\x27]*\x27', "buildTime:'<BUILD_TIME>'", s)
               return s
 
-          def normalize_css(s: str) -> str:
-              lines = s.splitlines()
-              if lines and ('ZotSeek Dialog Styles' in lines[0] or 'Semantic search dialog styles adapted from ZotSeek' in lines[0]):
-                  lines = lines[1:]
-              return '\n'.join(lines).strip() + '\n'
+          rn = normalize_build_metadata(rel_js)
+          bn = normalize_build_metadata(base_js)
+          print('release JS == rebuilt main after buildTime normalization:', rn == bn)
+          if rn != bn:
+              diff = list(difflib.unified_diff(rn.splitlines(True), bn.splitlines(True), fromfile='release-js', tofile='rebuilt-main-js'))
+              print('release vs rebuilt main JS diff lines:', len(diff))
+              print(''.join(diff[:1200]))
 
-          print('main vs integration normalized XHTML:', normalize_xhtml(main) == normalize_xhtml(new))
-          print('main vs integration normalized CSS:', normalize_css(main_css) == normalize_css(new_css))
-          print('release vs main XHTML exact:', rel == main)
-          print('release vs main CSS exact:', rel_css == main_css)
-          print('release vs integration normalized XHTML:', normalize_xhtml(rel) == normalize_xhtml(new))
-          print('release vs integration normalized CSS:', normalize_css(rel_css) == normalize_css(new_css))
-
-          if rel != main:
-              print('=== RELEASE vs MAIN XHTML DIFF ===')
-              print(''.join(difflib.unified_diff(rel.splitlines(True), main.splitlines(True), fromfile='release', tofile='main')))
-          if rel_css != main_css:
-              print('=== RELEASE vs MAIN CSS DIFF ===')
-              print(''.join(difflib.unified_diff(rel_css.splitlines(True), main_css.splitlines(True), fromfile='release', tofile='main')))
-
-          functions = [
-              'setupSnippetTooltip', 'onTableMouseMove', 'positionTooltip',
-              'hideSnippetTooltip', 'buildSnippetHtml', 'windowSnippet',
-              'highlightSnippet', 'getRowData', 'refreshTable', 'initTable',
-              'performSearch', 'keywordSearch', 'mergeResults',
-              'intersectResults', 'unionResults'
+          # Compare exact runtime code around semantic-search markers in release vs rebuilt main.
+          markers = [
+              '[SemanticDialog] Performing search',
+              '[SemanticDialog] Found',
+              '[SemanticDialog] Finding similar',
+              'findSimilar(itemKey',
+              'topK: 50',
+              'minScore: 0.1',
+              'matchedChunks',
+              'setupSnippetTooltip',
           ]
-          def extract_function(src: str, name: str) -> str:
-              marker = f'function {name}('
-              start = src.find(marker)
-              if start < 0:
-                  return '<MISSING>'
-              brace = src.find('{', start)
-              depth = 0
-              i = brace
-              while i < len(src):
-                  c = src[i]
-                  if c == '{': depth += 1
-                  elif c == '}':
-                      depth -= 1
-                      if depth == 0:
-                          return src[start:i+1]
-                  i += 1
-              return '<UNCLOSED>'
+          for marker in markers:
+              ri = rel_js.find(marker)
+              bi = base_js.find(marker)
+              print(f'MARKER {marker!r}: release_pos={ri}, main_pos={bi}')
+              if ri >= 0 and bi >= 0:
+                  rctx = rel_js[max(0, ri-1800):ri+3500]
+                  bctx = base_js[max(0, bi-1800):bi+3500]
+                  same = normalize_build_metadata(rctx) == normalize_build_metadata(bctx)
+                  print('  context identical:', same)
+                  if not same:
+                      d = list(difflib.unified_diff(rctx.splitlines(True), bctx.splitlines(True), fromfile='release-context', tofile='main-context'))
+                      print(''.join(d[:400]))
 
-          for name in functions:
-              r = extract_function(rel, name)
-              m = extract_function(main, name)
-              n = extract_function(new, name)
-              print(
-                  f'{name}: release==main {r == m}; release==integration {r == n}; '
-                  f'release_sha={hashlib.sha256(r.encode()).hexdigest()[:16]} '
-                  f'main_sha={hashlib.sha256(m.encode()).hexdigest()[:16]}'
-              )
-              if r != m:
-                  print(''.join(difflib.unified_diff(r.splitlines(True), m.splitlines(True), fromfile='release', tofile='main')))
-      - name: Show controller-only semantic differences
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --no-ext-diff --unified=80 c616d620427cbbd075d48caf6560ddd9c9f72728..HEAD -- zotero-mcp-plugin/src/modules/semanticSearchDialog.ts
+          # Current integration controller changes must not touch search parameters.
+          controller = Path('zotero-mcp-plugin/src/modules/semanticSearchDialog.ts').read_text()
+          assert 'topK: 50' in controller
+          assert 'minScore: 0.1' in controller
+          assert 'findSimilar(itemKey, { topK: 15 })' in controller
