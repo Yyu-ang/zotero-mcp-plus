@@ -1135,7 +1135,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'export_bibliography',
-        description: 'Export one or more Zotero items as BibLaTeX/BibTeX (or CSL-JSON/CSL-YAML) entries using Better BibTeX. Requires Better BibTeX to be installed and running.',
+        description: 'Export one or more Zotero items as BibLaTeX/BibTeX (or CSL-JSON/CSL-YAML) entries powered by the zotero-better-bibtex (BBT) plugin. Requires Better BibTeX to be installed and running in Zotero. Use search_library first to find itemKeys, then pass them here. Returns the exported bibliography text (e.g. @article{...} entries).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1151,7 +1151,15 @@ export class StreamableMCPServer {
             format: {
               type: 'string',
               enum: ['biblatex', 'bibtex', 'csljson', 'cslyaml'],
-              description: 'Export format. Defaults to biblatex.'
+              description: 'Export format. biblatex = Better BibLaTeX (default), bibtex = Better BibTeX, csljson = Better CSL JSON, cslyaml = Better CSL YAML.'
+            },
+            exportNotes: {
+              type: 'boolean',
+              description: 'Include item notes in the export (default: false)'
+            },
+            useJournalAbbreviation: {
+              type: 'boolean',
+              description: 'Use journal abbreviation instead of full name (default: false)'
             }
           },
           required: ['itemKeys']
@@ -1159,7 +1167,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'get_citation',
-        description: 'Generate a formatted bibliography entry or in-text citation using a CSL style. If style is omitted, uses the Zotero default Quick Copy style. Uses Zotero native citeproc and does not require Better BibTeX.',
+        description: 'Generate a formatted reference (bibliography entry) or in-text citation for one or more items using a CSL citation style. If no style is specified, uses the Zotero default Quick Copy style. Use list_citation_styles to discover available styles. Works without Better BibTeX (uses Zotero native citeproc).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1174,17 +1182,17 @@ export class StreamableMCPServer {
             },
             style: {
               type: 'string',
-              description: 'Optional CSL style ID or title, e.g. "apa", "ieee", or a full Zotero style URL.'
+              description: 'Optional CSL style ID or title, e.g. "apa", "ieee", "http://www.zotero.org/styles/american-medical-association". Omit to use the Zotero default Quick Copy style.'
             },
             contentType: {
               type: 'string',
               enum: ['html', 'text'],
-              description: 'Output content type. Defaults to html.'
+              description: 'Output content type: html (default) or plain text.'
             },
             mode: {
               type: 'string',
               enum: ['bibliography', 'citation'],
-              description: 'bibliography for full references or citation for in-text citations. Defaults to bibliography.'
+              description: 'Generation mode: bibliography (default, full reference entry) or citation (in-text citation).'
             }
           },
           required: ['itemKeys']
@@ -1192,17 +1200,17 @@ export class StreamableMCPServer {
       },
       {
         name: 'list_citation_styles',
-        description: 'List CSL citation styles available in Zotero for use with get_citation. Supports optional keyword filtering.',
+        description: 'List CSL citation styles available in Zotero (for use with get_citation). Each entry includes an id (styleID) and a human-readable title. Supports optional keyword filtering.',
         inputSchema: {
           type: 'object',
           properties: {
             filter: {
               type: 'string',
-              description: 'Optional case-insensitive keyword to filter styles by title or ID.'
+              description: 'Optional case-insensitive keyword to filter styles by title or id (e.g. "apa", "ieee", "chicago")'
             }
-          }
+          },
         }
-      }
+      },
     ];
 
     // Filter out semantic tools if semantic search is disabled
@@ -1917,16 +1925,26 @@ export class StreamableMCPServer {
     return this.citationExportService;
   }
 
+  /**
+   * 【功能 1】通过 zotero-better-bibtex 导出 BibLaTeX/BibTeX 条目。
+   */
   private async callExportBibliography(args: any): Promise<any> {
-    return this.getCitationExportService().exportBibliography({
+    const service = this.getCitationExportService();
+    return service.exportBibliography({
       itemKeys: args.itemKeys,
       format: args.format,
       libraryID: args.libraryID,
+      exportNotes: args.exportNotes,
+      useJournalAbbreviation: args.useJournalAbbreviation,
     });
   }
 
+  /**
+   * 【功能 2】生成指定 CSL 样式的参考文献条目（未指定样式时使用默认样式）。
+   */
   private async callGetCitation(args: any): Promise<any> {
-    return this.getCitationExportService().getCitation({
+    const service = this.getCitationExportService();
+    return service.getCitation({
       itemKeys: args.itemKeys,
       style: args.style,
       contentType: args.contentType,
@@ -1935,8 +1953,12 @@ export class StreamableMCPServer {
     });
   }
 
+  /**
+   * 列出可用的 CSL 引文样式。
+   */
   private async callListCitationStyles(args: any): Promise<any> {
-    return this.getCitationExportService().listStyles(args?.filter);
+    const service = this.getCitationExportService();
+    return service.listStyles(args?.filter);
   }
 
   // ============ Semantic Search Methods ============
