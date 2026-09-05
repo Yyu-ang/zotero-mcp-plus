@@ -23,6 +23,12 @@ jobs:
           cache: npm
           cache-dependency-path: zotero-mcp-plugin/package-lock.json
 
+      - name: Configure git identity
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Build audited split
         run: python3 scripts/build_pr92_bbt_citation_v2.py
 
@@ -52,8 +58,6 @@ jobs:
         run: |
           set -euo pipefail
           rm .github/workflows/tmp-pr92-bbt-citation-v2.yml scripts/build_pr92_bbt_citation_v2.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "fix(citation): restore cloneorcopy behavior with QuickCopy fixes"
           git push origin HEAD:tmp/pr92-bbt-citation-v2-build-3
