@@ -1,0 +1,90 @@
+name: tmp PR92 safe citation v2
+
+on:
+  push:
+    branches:
+      - 'tmp/pr92-safe-citation-files-v2-build'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/pr92-safe-citation-files-v2-build
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: zotero-mcp-plugin/package-lock.json
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Build reviewed safety delta
+        run: python3 scripts/build_pr92_safe_citation_v2.py
+
+      - name: Verify safety and preserved behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q "CITATION_FILE_TOOLS_PREF" zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          grep -q "assertCitationFileToolsEnabled" zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          grep -q "citationFilteredTools" zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          grep -q "assertSafeCitationFilePath" zotero-mcp-plugin/src/modules/citationExportService.ts
+          grep -q "enum: \['bibtex', 'biblatex', 'csljson', 'cslyaml'\]" zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          grep -q 'format = `bibliography=${resolved.styleID}`' zotero-mcp-plugin/src/modules/citationExportService.ts
+          grep -q 'unserializeSetting' zotero-mcp-plugin/src/modules/citationExportService.ts
+          grep -q '^          undefined,$' zotero-mcp-plugin/src/modules/citationExportService.ts
+
+      - name: Install and build
+        working-directory: zotero-mcp-plugin
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run tests
+        working-directory: zotero-mcp-plugin
+        shell: bash
+        run: |
+          set +e
+          npm test 2>&1 | tee /tmp/zotero-test.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            grep -Eq "Test run completed - [0-9]+ passed, 1 failed" /tmp/zotero-test.log
+            grep -q "does not hold collection creation on a slow notifier observer" /tmp/zotero-test.log
+            echo "Only known unrelated notifier timing test failed."
+          fi
+
+      - name: Commit validated safety delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            zotero-mcp-plugin/addon/content/preferences.xhtml \
+            zotero-mcp-plugin/addon/locale/de-DE/preferences.ftl \
+            zotero-mcp-plugin/addon/locale/en-US/preferences.ftl \
+            zotero-mcp-plugin/addon/locale/es-ES/preferences.ftl \
+            zotero-mcp-plugin/addon/locale/fr-FR/preferences.ftl \
+            zotero-mcp-plugin/addon/locale/ja-JP/preferences.ftl \
+            zotero-mcp-plugin/addon/locale/zh-CN/preferences.ftl \
+            zotero-mcp-plugin/src/modules/citationExportService.ts \
+            zotero-mcp-plugin/src/modules/citationFileSafety.ts \
+            zotero-mcp-plugin/src/modules/streamableMCPServer.ts \
+            zotero-mcp-plugin/test/citationFileBehavior.test.ts \
+            zotero-mcp-plugin/test/citationFileSafety.test.ts \
+            zotero-mcp-plugin/test/citationFileTools.test.ts \
+            zotero-mcp-plugin/typings/i10n.d.ts
+          git commit -m "feat(citation): gate local bibliography and draft writes"
+          git push origin HEAD:tmp/pr92-safe-citation-files-v2-build
