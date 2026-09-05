@@ -93,6 +93,8 @@ const BUILTIN_TOOL_NAMES = new Set<string>([
   'export_bibliography',
   'get_citation',
   'list_citation_styles',
+  'sync_bib',
+  'cite',
 ]);
 
 class ToolRegistry {
