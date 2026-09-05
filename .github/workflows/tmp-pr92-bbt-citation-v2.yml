@@ -1,0 +1,59 @@
+name: tmp PR92 BBT citation v2
+
+on:
+  push:
+    branches:
+      - 'tmp/pr92-bbt-citation-v2-build-3'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/pr92-bbt-citation-v2-build-3
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: zotero-mcp-plugin/package-lock.json
+
+      - name: Build audited split
+        run: python3 scripts/build_pr92_bbt_citation_v2.py
+
+      - name: Verify scope and behavior guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -f zotero-mcp-plugin/src/modules/citationExportService.ts
+          ! grep -q "syncBibFile" zotero-mcp-plugin/src/modules/citationExportService.ts
+          ! grep -q "citeInDraft" zotero-mcp-plugin/src/modules/citationExportService.ts
+          grep -q 'format = `bibliography=${resolved.styleID}`' zotero-mcp-plugin/src/modules/citationExportService.ts
+          grep -q 'unserializeSetting' zotero-mcp-plugin/src/modules/citationExportService.ts
+          grep -q '^          undefined,$' zotero-mcp-plugin/src/modules/citationExportService.ts
+          ! grep -q "name: 'sync_bib'" zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          ! grep -q "name: 'cite'" zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+
+      - name: Install, build, and test
+        working-directory: zotero-mcp-plugin
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: Commit validated feature tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/tmp-pr92-bbt-citation-v2.yml scripts/build_pr92_bbt_citation_v2.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(citation): restore cloneorcopy behavior with QuickCopy fixes"
+          git push origin HEAD:tmp/pr92-bbt-citation-v2-build-3
