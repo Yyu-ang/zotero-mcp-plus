@@ -71,6 +71,8 @@ export type FluentMessageId =
   | 'pref-api-usage-total-requests'
   | 'pref-api-usage-total-texts'
   | 'pref-api-usage-total-tokens'
+  | 'pref-citation-files-enable-sub'
+  | 'pref-citation-files-enable-text'
   | 'pref-client-codex-cli'
   | 'pref-client-config-description'
   | 'pref-client-config-title'
