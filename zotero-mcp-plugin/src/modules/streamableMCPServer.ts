@@ -23,6 +23,8 @@ import { getSemanticSearchService, SemanticSearchService } from './semantic';
 import { CitationExportService } from './citationExportService';
 import { getToolRegistry } from './toolRegistry';
 
+const CITATION_FILE_TOOLS_PREF = 'extensions.zotero.zotero-mcp-plugin.citationFiles.enabled';
+
 export interface MCPRequest {
   jsonrpc: '2.0';
   id?: string | number | null;
@@ -1168,6 +1170,16 @@ export class StreamableMCPServer {
             includeChildren: {
               type: 'boolean',
               description: 'Include child notes and attachments in the export (default: false, exports top-level items only)'
+            },
+            overwrite: {
+              type: 'boolean',
+              description: 'Set true to replace an existing .bib file. Existing files are protected by default.'
+            },
+            timeoutMs: {
+              type: 'number',
+              minimum: 1000,
+              maximum: 600000,
+              description: 'Better BibTeX JSON-RPC timeout in milliseconds (default: 30000). Increase for large libraries.'
             }
           },
           required: ['bibPath']
@@ -1220,14 +1232,21 @@ export class StreamableMCPServer {
       ? tools.filter((t: any) => !semanticToolNames.has(t.name))
       : tools;
 
+    // File-editing citation tools have their own default-off safety gate.
+    const citationFilesEnabled = Zotero.Prefs.get(CITATION_FILE_TOOLS_PREF, true);
+    const citationFileToolNames = new Set(['sync_bib', 'cite']);
+    const citationFilteredTools = citationFilesEnabled === true
+      ? filteredTools
+      : filteredTools.filter((t: any) => !citationFileToolNames.has(t.name));
+
     // Filter out write tools if write operations are disabled (default: disabled)
     const writeEnabled = Zotero.Prefs.get('extensions.zotero.zotero-mcp-plugin.write.enabled', true);
     const writeToolNames = new Set([
       'write_note', 'write_tag', 'write_metadata', 'write_item',
     ]);
     const finalTools = writeEnabled === true
-      ? filteredTools
-      : filteredTools.filter((t: any) => !writeToolNames.has(t.name));
+      ? citationFilteredTools
+      : citationFilteredTools.filter((t: any) => !writeToolNames.has(t.name));
 
     // Append externally-registered tools from other Zotero plugins
     const externalTools = getToolRegistry().getToolDefinitions();
@@ -1503,6 +1522,7 @@ export class StreamableMCPServer {
           break;
 
         case 'sync_bib': {
+          this.assertCitationFileToolsEnabled();
           if (!args?.bibPath) {
             throw new Error('bibPath is required (absolute path to the output .bib file)');
           }
@@ -1511,6 +1531,7 @@ export class StreamableMCPServer {
         }
 
         case 'cite': {
+          this.assertCitationFileToolsEnabled();
           if (!args?.bibPath) {
             throw new Error('bibPath is required (path to the .bib file)');
           }
@@ -1911,6 +1932,13 @@ export class StreamableMCPServer {
 
   // ============ Citation & Bibliography Export Methods ============
 
+  private assertCitationFileToolsEnabled(): void {
+    const enabled = Zotero.Prefs.get(CITATION_FILE_TOOLS_PREF, true);
+    if (enabled !== true) {
+      throw new Error('Citation file tools are disabled. Enable "Citation File Tools" in Zotero MCP Plugin preferences to use sync_bib or cite.');
+    }
+  }
+
   private citationExportService: CitationExportService | null = null;
 
   private getCitationExportService(): CitationExportService {
@@ -1966,6 +1994,8 @@ export class StreamableMCPServer {
       format: args.format,
       libraryID: args.libraryID,
       includeChildren: args.includeChildren,
+      overwrite: args.overwrite,
+      timeoutMs: args.timeoutMs,
     });
   }
 
