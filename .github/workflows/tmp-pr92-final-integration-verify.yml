@@ -1,0 +1,45 @@
+name: tmp PR92 final integration verify
+
+on:
+  push:
+    branches:
+      - 'tmp/pr92-final-integration-verify'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/pr92-final-integration-verify
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: zotero-mcp-plugin/package-lock.json
+      - name: Verify final integration invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'unserializeSetting' zotero-mcp-plugin/src/modules/citationExportService.ts
+          grep -q 'CITATION_FILE_TOOLS_PREF' zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          grep -q "name: 'sync_bib'" zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          grep -q "name: 'cite'" zotero-mcp-plugin/src/modules/streamableMCPServer.ts
+          grep -q 'VirtualizedTableHelper' zotero-mcp-plugin/addon/content/searchDialog.xhtml
+          grep -q 'zotseek-query-4' zotero-mcp-plugin/addon/content/searchDialog.xhtml
+          grep -q 'getByLibraryAndKeyAsync' zotero-mcp-plugin/src/modules/semanticSearchDialog.ts
+          grep -q 'pluginID?: string' zotero-mcp-plugin/src/modules/toolRegistry.ts
+          grep -q 'registerTool(def: ExternalToolDefinition): boolean' zotero-mcp-plugin/src/modules/toolRegistry.ts
+          grep -q "'sync_bib'" zotero-mcp-plugin/src/modules/toolRegistry.ts
+          grep -q "'cite'" zotero-mcp-plugin/src/modules/toolRegistry.ts
+          ! grep -q 'externalTools.enabled' zotero-mcp-plugin/src/modules/toolRegistry.ts
+          git diff --check HEAD^..HEAD || true
+      - name: Install
+        working-directory: zotero-mcp-plugin
+        run: npm ci
+      - name: Build
+        working-directory: zotero-mcp-plugin
+        run: npm run build
+      - name: Test
+        working-directory: zotero-mcp-plugin
+        run: npm test
