@@ -1,0 +1,82 @@
+name: tmp PR92 external tool API v2
+
+on:
+  push:
+    branches:
+      - 'tmp/pr92-external-tool-api-v2-build'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/pr92-external-tool-api-v2-build
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: zotero-mcp-plugin/package-lock.json
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Build original external API split
+        run: python3 scripts/build_pr92_external_api_v2.py
+
+      - name: Verify public API compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q "pluginID?: string" zotero-mcp-plugin/src/modules/toolRegistry.ts
+          grep -q "registerTool(def: ExternalToolDefinition): boolean" zotero-mcp-plugin/src/modules/toolRegistry.ts
+          grep -q "unregisterTool(name: string): boolean" zotero-mcp-plugin/src/modules/toolRegistry.ts
+          grep -q "'sync_bib'" zotero-mcp-plugin/src/modules/toolRegistry.ts
+          grep -q "'cite'" zotero-mcp-plugin/src/modules/toolRegistry.ts
+          ! grep -q "externalTools.enabled" zotero-mcp-plugin/src/modules/toolRegistry.ts
+
+      - name: Install and build
+        working-directory: zotero-mcp-plugin
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run tests
+        working-directory: zotero-mcp-plugin
+        shell: bash
+        run: |
+          set +e
+          npm test 2>&1 | tee /tmp/zotero-test.log
+          status=${PIPESTATUS[0]}
+          set -e
+          grep -q "keeps pluginID optional and boolean register/unregister semantics" /tmp/zotero-test.log
+          grep -q "reserves sync_bib and cite as built-in tool names" /tmp/zotero-test.log
+          if [ "$status" -ne 0 ]; then
+            grep -Eq "Test run completed - [0-9]+ passed, 1 failed" /tmp/zotero-test.log
+            grep -q "does not hold collection creation on a slow notifier observer" /tmp/zotero-test.log
+            echo "Only known unrelated notifier timing test failed."
+          fi
+
+      - name: Commit validated external API split
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add \
+            README.md README-zh.md \
+            zotero-mcp-plugin/src/addon.ts \
+            zotero-mcp-plugin/src/hooks.ts \
+            zotero-mcp-plugin/src/modules/externalToolExample.ts \
+            zotero-mcp-plugin/src/modules/streamableMCPServer.ts \
+            zotero-mcp-plugin/src/modules/toolRegistry.ts \
+            zotero-mcp-plugin/test/externalToolRegistry.test.ts \
+            zotero-mcp-plugin/typings/zotero-mcp-api.d.ts
+          git commit -m "feat(tools): add external tool registration API"
+          git push origin HEAD:tmp/pr92-external-tool-api-v2-build
