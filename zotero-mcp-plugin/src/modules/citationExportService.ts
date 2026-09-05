@@ -18,6 +18,8 @@
  *   - Zotero.Styles.getVisible() / Zotero.Styles.get(styleID)
  */
 
+import { assertSafeCitationFilePath } from "./citationFileSafety";
+
 declare let ztoolkit: ZToolkit;
 declare const IOUtils: any;
 
@@ -50,7 +52,7 @@ export class CitationExportService {
    * @param params 位置参数数组
    * @returns result 字段
    */
-  private async bbtRpc(method: string, params: any[] = []): Promise<any> {
+  private async bbtRpc(method: string, params: any[] = [], timeoutMs: number = 30000): Promise<any> {
     const body = JSON.stringify({
       jsonrpc: "2.0",
       method,
@@ -70,7 +72,7 @@ export class CitationExportService {
           "Zotero-Allowed-Request": "1",
         },
         body,
-        timeout: 30000,
+        timeout: timeoutMs,
         responseType: "json",
       });
     } catch (e) {
@@ -96,14 +98,14 @@ export class CitationExportService {
   /**
    * 检测 Better BibTeX 是否安装且 JSON-RPC 可用。
    */
-  async checkBBT(): Promise<{
+  async checkBBT(timeoutMs: number = 30000): Promise<{
     available: boolean;
     betterbibtexVersion?: string;
     zoteroVersion?: string;
     error?: string;
   }> {
     try {
-      const result = await this.bbtRpc("api.ready", []);
+      const result = await this.bbtRpc("api.ready", [], timeoutMs);
       return {
         available: true,
         betterbibtexVersion: result?.betterbibtex ?? UNKNOWN,
@@ -125,6 +127,7 @@ export class CitationExportService {
   async resolveCitekeys(
     itemKeys: string[],
     libraryID?: number,
+    timeoutMs: number = 30000,
   ): Promise<{
     citekeys: string[];
     map: Record<string, string>;
@@ -135,7 +138,7 @@ export class CitationExportService {
       libraryID !== undefined && libraryID !== null ? `${libraryID}:${k}` : k,
     );
 
-    const result = (await this.bbtRpc("item.citationkey", [keyStrings])) ?? {};
+    const result = (await this.bbtRpc("item.citationkey", [keyStrings], timeoutMs)) ?? {};
 
     const map: Record<string, string> = {};
     const citekeys: string[] = [];
@@ -171,6 +174,7 @@ export class CitationExportService {
     libraryID?: number;
     exportNotes?: boolean;
     useJournalAbbreviation?: boolean;
+    timeoutMs?: number;
   }): Promise<any> {
     const {
       itemKeys,
@@ -178,6 +182,7 @@ export class CitationExportService {
       libraryID,
       exportNotes = false,
       useJournalAbbreviation = false,
+      timeoutMs = 30000,
     } = params;
 
     if (!itemKeys || itemKeys.length === 0) {
@@ -189,7 +194,7 @@ export class CitationExportService {
       BBT_TRANSLATORS[normalizedFormat] ?? BBT_TRANSLATORS.biblatex;
 
     // 1) 先校验 BBT 可用性，给出友好错误
-    const bbtStatus = await this.checkBBT();
+    const bbtStatus = await this.checkBBT(timeoutMs);
     if (!bbtStatus.available) {
       throw new Error(
         `导出 ${normalizedFormat} 需要 Better BibTeX 插件支持，但当前不可用：${bbtStatus.error ?? "未知原因"}`,
@@ -200,6 +205,7 @@ export class CitationExportService {
     const { citekeys, missing } = await this.resolveCitekeys(
       itemKeys,
       libraryID,
+      timeoutMs,
     );
     if (citekeys.length === 0) {
       throw new Error(
@@ -216,7 +222,7 @@ export class CitationExportService {
 
     let exportString: string;
     try {
-      exportString = await this.bbtRpc("item.export", rpcParams);
+      exportString = await this.bbtRpc("item.export", rpcParams, timeoutMs);
     } catch (e) {
       // BBT item.export 可能不支持 displayOptions，作为独立提示
       throw new Error(
@@ -447,6 +453,327 @@ export class CitationExportService {
     return {
       total: mapped.length,
       styles: mapped,
+    };
+  }
+
+  // ============ sync-bib & cite Draft Methods ============
+
+  /**
+   * Escape special regex characters in a string.
+   */
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * Count BibTeX entries in exported text.
+   */
+  private countBibtexEntries(text: string): number {
+    const matches = text.match(/@\w+\s*\{\s*[^,\s]+/g);
+    return matches ? matches.length : 0;
+  }
+
+  /**
+   * Get all top-level (or all) item keys from a Zotero library.
+   */
+  private async getAllItemKeys(
+    libraryID: number,
+    includeChildren: boolean = false,
+  ): Promise<string[]> {
+    const s = new Zotero.Search();
+    (s as any).libraryID = libraryID;
+    if (!includeChildren) {
+      s.addCondition('noChildren', 'true');
+    }
+    const ids = await s.search();
+    const items = await Zotero.Items.getAsync(ids);
+    return items
+      .filter((item: any) => !item.isAttachment() && !item.isNote())
+      .map((item: any) => item.key);
+  }
+
+  /**
+   * Find a single Zotero item by itemKey or search query.
+   * When multiple items match the query, the first result is used
+   * and a warning is logged.
+   */
+  private async findItemByKeyOrQuery(
+    itemKey: string | undefined,
+    query: string | undefined,
+    libraryID: number,
+  ): Promise<any> {
+    if (itemKey) {
+      const item = await Zotero.Items.getByLibraryAndKeyAsync(
+        libraryID,
+        itemKey,
+      );
+      if (!item) {
+        throw new Error(`No item found with key: ${itemKey}`);
+      }
+      return item;
+    }
+
+    if (!query) {
+      throw new Error('Either itemKey or query must be provided');
+    }
+
+    // Search by title and creators
+    const s = new Zotero.Search();
+    (s as any).libraryID = libraryID;
+    s.addCondition('noChildren', 'true');
+    const ids = await s.search();
+    const items = await Zotero.Items.getAsync(ids);
+
+    const lower = query.toLowerCase();
+    const matches = items.filter((item: any) => {
+      const title = (item.getField('title') || '').toLowerCase();
+      const creatorParts = item
+        .getCreators()
+        .map((c: any) =>
+          [c.lastName, c.firstName, c.name]
+            .filter(Boolean)
+            .join(' '),
+        )
+        .join(' ')
+        .toLowerCase();
+      return title.includes(lower) || creatorParts.includes(lower);
+    });
+
+    if (matches.length === 0) {
+      throw new Error(`No items found matching query: "${query}"`);
+    }
+    if (matches.length > 1) {
+      ztoolkit.log(
+        `[CitationExport] findItemByKeyOrQuery: ${matches.length} matches, using first: ${matches[0].key}`,
+      );
+    }
+    return matches[0];
+  }
+
+  /**
+   * 【功能 3】同步导出整个 Zotero 文献库到 .bib 文件。
+   *
+   * 导出所有顶级条目（或包含子条目）为 BibTeX/BibLaTeX 格式，
+   * 并写入指定的 .bib 文件。类似于 OpenAI Codex zotero skill 的 sync-bib 命令。
+   *
+   * @param params.bibPath         目标 .bib 文件的绝对路径
+   * @param params.format          导出格式：bibtex(默认) | biblatex | csljson | cslyaml
+   * @param params.libraryID       可选库 ID
+   * @param params.includeChildren 是否包含子条目（笔记、附件等）
+   */
+  async syncBibFile(params: {
+    bibPath: string;
+    format?: string;
+    libraryID?: number;
+    includeChildren?: boolean;
+    overwrite?: boolean;
+    timeoutMs?: number;
+  }): Promise<any> {
+    const {
+      format = 'bibtex',
+      libraryID,
+      includeChildren = false,
+      overwrite = false,
+      timeoutMs = 30000,
+    } = params;
+    const bibPath = assertSafeCitationFilePath(
+      params.bibPath,
+      ['.bib'],
+      'bibPath',
+    );
+
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 600000) {
+      throw new Error('timeoutMs must be an integer between 1000 and 600000');
+    }
+    if ((await IOUtils.exists(bibPath)) && !overwrite) {
+      throw new Error(
+        `Refusing to overwrite existing bibliography: ${bibPath}. Set overwrite=true to replace it.`,
+      );
+    }
+
+    const lib =
+      libraryID !== undefined && libraryID !== null
+        ? libraryID
+        : Zotero.Libraries.userLibraryID;
+
+    // 1) Get all item keys
+    const itemKeys = await this.getAllItemKeys(lib, includeChildren);
+
+    if (itemKeys.length === 0) {
+      throw new Error('No items found in the library to export.');
+    }
+
+    // 2) Export via BBT. Keep the original single-export semantics for all
+    // formats; timeoutMs makes the previous fixed 30s RPC timeout configurable.
+    const exportResult = await this.exportBibliography({
+      itemKeys,
+      format,
+      libraryID: lib,
+      timeoutMs,
+    });
+
+    const content = exportResult.content || '';
+
+    // 3) Write to file
+    await IOUtils.writeUTF8(bibPath, content);
+
+    const entryCount = this.countBibtexEntries(content);
+
+    ztoolkit.log(
+      `[CitationExport] syncBibFile: format=${format}, items=${itemKeys.length}, entries=${entryCount}, path=${bibPath}`,
+    );
+
+    return {
+      path: bibPath,
+      format,
+      entries: entryCount,
+      exportedCount: exportResult.exportedCount,
+      missingKeys: exportResult.missingKeys,
+    };
+  }
+
+  /**
+   * 【功能 4】在草稿（LaTeX 或 Markdown）中插入引用，并同步 .bib 文件。
+   *
+   * 查找 Zotero 条目 → 导出为 BibTeX → 追加到 .bib 文件（若不存在） →
+   * 在草稿中插入引用标记。类似于 OpenAI Codex zotero skill 的 cite 命令。
+   *
+   * @param params.itemKey      Zotero 条目 Key（与 query 二选一）
+   * @param params.query       搜索关键词（与 itemKey 二选一）
+   * @param params.bibPath     .bib 文件路径（默认 references.bib）
+   * @param params.texPath     LaTeX 草稿路径（与 markdownPath 二选一）
+   * @param params.markdownPath Markdown 草稿路径（与 texPath 二选一）
+   * @param params.marker      若提供，将草稿中该标记替换为引用；否则在末尾追加
+   * @param params.libraryID    可选库 ID
+   */
+  async citeInDraft(params: {
+    itemKey?: string;
+    query?: string;
+    bibPath: string;
+    texPath?: string;
+    markdownPath?: string;
+    marker?: string;
+    libraryID?: number;
+  }): Promise<any> {
+    const {
+      itemKey,
+      query,
+      bibPath: rawBibPath,
+      texPath,
+      markdownPath,
+      marker,
+      libraryID,
+    } = params;
+
+    const bibPath = assertSafeCitationFilePath(rawBibPath, ['.bib'], 'bibPath');
+    const draftPath = texPath
+      ? assertSafeCitationFilePath(texPath, ['.tex'], 'texPath')
+      : markdownPath
+        ? assertSafeCitationFilePath(markdownPath, ['.md', '.markdown'], 'markdownPath')
+        : undefined;
+
+    const lib =
+      libraryID !== undefined && libraryID !== null
+        ? libraryID
+        : Zotero.Libraries.userLibraryID;
+
+    // 1) Find item
+    const item = await this.findItemByKeyOrQuery(itemKey, query, lib);
+    const foundKey = item.key;
+    if (!foundKey) {
+      throw new Error('Matched Zotero item has no key');
+    }
+    const title = item.getField('title') || '';
+
+    // 2) Export as BibTeX
+    const exportResult = await this.exportBibliography({
+      itemKeys: [foundKey],
+      format: 'bibtex',
+      libraryID: lib,
+    });
+
+    const bibtexContent = (exportResult.content || '').trim();
+    const citekeys = exportResult.citationKeys || [];
+    if (citekeys.length === 0) {
+      throw new Error(
+        'Could not extract a citation key from the BibTeX export.',
+      );
+    }
+    const citekey = citekeys[0];
+
+    // 3) Read existing .bib and check for duplicates
+    let existingBib = '';
+    try {
+      if (await IOUtils.exists(bibPath)) {
+        existingBib = await IOUtils.readUTF8(bibPath);
+      }
+    } catch {
+      // file may not exist yet
+    }
+
+    const keyRegex = new RegExp(
+      `@\\w+\\s*\\{\\s*${this.escapeRegex(citekey)}\\s*,`,
+      'i',
+    );
+    const alreadyPresent = keyRegex.test(existingBib);
+    let bibEntryAdded = false;
+
+    if (!alreadyPresent) {
+      const prefix =
+        existingBib.trim().length > 0
+          ? existingBib.replace(/\n+$/, '') + '\n\n'
+          : '';
+      await IOUtils.writeUTF8(bibPath, prefix + bibtexContent + '\n');
+      bibEntryAdded = true;
+    }
+
+    // 4) Determine citation format
+    const isLatex = !!texPath;
+    const citation = isLatex
+      ? `\\cite{${citekey}}`
+      : `[@${citekey}]`;
+
+    if (!draftPath) {
+      throw new Error('Either texPath or markdownPath must be provided');
+    }
+
+    // 5) Read draft and insert citation
+    let draftContent = '';
+    try {
+      if (await IOUtils.exists(draftPath)) {
+        draftContent = await IOUtils.readUTF8(draftPath);
+      }
+    } catch {
+      // file may not exist yet
+    }
+
+    if (marker) {
+      if (!draftContent.includes(marker)) {
+        throw new Error(`Marker "${marker}" not found in ${draftPath}`);
+      }
+      draftContent = draftContent.replace(marker, citation);
+    } else {
+      const suffix =
+        draftContent.length === 0 || draftContent.endsWith('\n')
+          ? ''
+          : '\n';
+      draftContent = draftContent + suffix + citation + '\n';
+    }
+
+    await IOUtils.writeUTF8(draftPath, draftContent);
+
+    ztoolkit.log(
+      `[CitationExport] citeInDraft: itemKey=${foundKey}, citekey=${citekey}, bibAdded=${bibEntryAdded}, draft=${draftPath}`,
+    );
+
+    return {
+      item_key: foundKey,
+      title,
+      bibtex_key: citekey,
+      bib_path: bibPath,
+      bib_entry_added: bibEntryAdded,
+      edited_file: draftPath,
+      inserted: citation,
     };
   }
 }
