@@ -76,8 +76,13 @@ describe("CitationExportService", function () {
   });
 
   it("uses bibliography QuickCopy format and fourth argument for in-text citations", async function () {
-    await (Zotero.Schema as any).schemaUpdatePromise;
     const service = new CitationExportService();
+    (service as any).resolveStyle = () => ({
+      styleID: APA_STYLE,
+      title: "APA",
+      hasBibliography: true,
+    });
+
     const itemKey = "ABCD1234";
     const restoreItemLookup = installFakeItem(itemKey);
 
