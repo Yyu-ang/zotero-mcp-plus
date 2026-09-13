@@ -5,9 +5,40 @@ declare const expect: Chai.ExpectStatic;
 const QUICK_COPY_PREF = "export.quickCopy.setting";
 const APA_STYLE = "http://www.zotero.org/styles/apa";
 
+function installFakeItem(itemKey: string): () => void {
+  const items = Zotero.Items as any;
+  const original = items.getByLibraryAndKeyAsync;
+  const fakeItem = {
+    key: itemKey,
+    isAttachment: () => false,
+    isNote: () => false,
+  };
+
+  items.getByLibraryAndKeyAsync = async (
+    libraryID: number,
+    requestedKey: string,
+  ) => {
+    if (requestedKey === itemKey) {
+      return fakeItem;
+    }
+    return original.call(items, libraryID, requestedKey);
+  };
+
+  return () => {
+    items.getByLibraryAndKeyAsync = original;
+  };
+}
+
 describe("CitationExportService", function () {
+  let previousZtoolkit: any;
+
   beforeEach(function () {
+    previousZtoolkit = (globalThis as any).ztoolkit;
     (globalThis as any).ztoolkit = { log: () => undefined };
+  });
+
+  afterEach(function () {
+    (globalThis as any).ztoolkit = previousZtoolkit;
   });
 
   it("keeps the original Better BibTeX export flow", async function () {
@@ -47,10 +78,8 @@ describe("CitationExportService", function () {
   it("uses bibliography QuickCopy format and fourth argument for in-text citations", async function () {
     await (Zotero.Schema as any).schemaUpdatePromise;
     const service = new CitationExportService();
-    const item = new Zotero.Item("journalArticle");
-    item.libraryID = Zotero.Libraries.userLibraryID;
-    item.setField("title", "Citation regression test");
-    await item.saveTx({ skipNotifier: true });
+    const itemKey = "ABCD1234";
+    const restoreItemLookup = installFakeItem(itemKey);
 
     const quickCopy = Zotero.QuickCopy as any;
     const original = quickCopy.getContentFromItems;
@@ -62,7 +91,7 @@ describe("CitationExportService", function () {
 
     try {
       const result = await service.getCitation({
-        itemKeys: [item.key],
+        itemKeys: [itemKey],
         style: APA_STYLE,
         mode: "citation",
         contentType: "text",
@@ -75,16 +104,14 @@ describe("CitationExportService", function () {
       expect(result.content).to.equal("(Test, 2026)");
     } finally {
       quickCopy.getContentFromItems = original;
-      await item.eraseTx({ skipNotifier: true });
+      restoreItemLookup();
     }
   });
 
   it("parses bibliography/html QuickCopy settings instead of falling back to APA", async function () {
     const service = new CitationExportService();
-    const item = new Zotero.Item("journalArticle");
-    item.libraryID = Zotero.Libraries.userLibraryID;
-    item.setField("title", "Quick Copy parsing test");
-    await item.saveTx({ skipNotifier: true });
+    const itemKey = "EFGH5678";
+    const restoreItemLookup = installFakeItem(itemKey);
 
     const previous = Zotero.Prefs.get(QUICK_COPY_PREF) as any;
     const testStyle = "http://www.zotero.org/styles/review-test-style";
@@ -100,7 +127,7 @@ describe("CitationExportService", function () {
 
     try {
       const result = await service.getCitation({
-        itemKeys: [item.key],
+        itemKeys: [itemKey],
         mode: "bibliography",
         contentType: "html",
       });
@@ -110,12 +137,12 @@ describe("CitationExportService", function () {
       expect(result.content).to.equal("<span>html</span>");
     } finally {
       quickCopy.getContentFromItems = original;
+      restoreItemLookup();
       if (previous === undefined || previous === null) {
         Zotero.Prefs.clear(QUICK_COPY_PREF);
       } else {
         Zotero.Prefs.set(QUICK_COPY_PREF, previous);
       }
-      await item.eraseTx({ skipNotifier: true });
     }
   });
 });
