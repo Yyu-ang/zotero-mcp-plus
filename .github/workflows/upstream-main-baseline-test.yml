@@ -1,0 +1,28 @@
+name: Upstream main baseline test
+
+on:
+  push:
+    branches:
+      - tmp/upstream-main-81d0777-test
+    paths:
+      - .github/workflows/upstream-main-baseline-test.yml
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reset to upstream baseline
+        run: |
+          git reset --hard 81d0777b49ded0959d197c7610d8b6e5f32c2485
+      - name: Install dependencies
+        working-directory: zotero-mcp-plugin
+        run: npm ci
+      - name: Run tests on unmodified upstream main
+        working-directory: zotero-mcp-plugin
+        run: npm test
