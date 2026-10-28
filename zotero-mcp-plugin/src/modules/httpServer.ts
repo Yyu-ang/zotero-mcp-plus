@@ -282,18 +282,8 @@ export class HttpServer {
 
         if (!read.complete) {
           ztoolkit.log(
-            `[HttpServer] Error reading request: ${readError}, BytesRead: ${totalBytesRead}, InputStream available: ${input?.available ? input.available() : 'N/A'}`,
-            "error",
-          );
-          requestText = requestText || "INVALID_REQUEST";
-        }
-
-        try {
-          if (converterStream) converterStream.close();
-        } catch (e) {
-          ztoolkit.log(
-            `[HttpServer] Error closing converter stream: ${e}`,
-            "error",
+            `[HttpServer] Incomplete request (${read.incompleteReason}): BytesRead=${totalBytesRead}, Content-Length=${contentLength}`,
+            "warn",
           );
         }
 
@@ -417,7 +407,7 @@ export class HttpServer {
           }
 
           // Determine if connection should be kept alive
-          const keepAlive = this.shouldKeepAlive(requestText, path);
+          const keepAlive = this.shouldKeepAlive(headerText, path);
 
           let result;
 
