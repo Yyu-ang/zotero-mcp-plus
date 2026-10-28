@@ -48,4 +48,6 @@ jobs:
           npm ci
           npm run build
           npm install --no-save --package-lock=false tsx
-          NODE_OPTIONS='--import tsx' npm run test:unit
+          # Node-only unit tests; Zotero-dependent tests require the Zotero runtime.
+          printf 'import { expect } from "chai"; globalThis.expect = expect;\n' > test/.ci-node-globals.mjs
+          NODE_OPTIONS='--import tsx' npx mocha --no-config --require ./test/.ci-node-globals.mjs test/httpRequestReader.test.ts test/citationFileSafety.test.ts test/externalToolRegistry.test.ts
