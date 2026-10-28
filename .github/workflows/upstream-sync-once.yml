@@ -47,4 +47,5 @@ jobs:
         run: |
           npm ci
           npm run build
-          npm run test:unit
+          npm install --no-save --package-lock=false tsx
+          NODE_OPTIONS='--import tsx' npm run test:unit
