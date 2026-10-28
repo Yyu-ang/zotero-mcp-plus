@@ -23,6 +23,12 @@ import { MCPSettingsService } from './mcpSettingsService';
 import { getSemanticSearchService, SemanticSearchService } from './semantic';
 import { CitationExportService } from './citationExportService';
 import { getToolRegistry } from './toolRegistry';
+import {
+  commitNotifierQueue,
+  createNotifierQueue,
+  notifierSaveOptions,
+  runSerializedWrite,
+} from './deferredNotifierCommitter';
 
 const CITATION_FILE_TOOLS_PREF = 'extensions.zotero.zotero-mcp-plugin.citationFiles.enabled';
 
