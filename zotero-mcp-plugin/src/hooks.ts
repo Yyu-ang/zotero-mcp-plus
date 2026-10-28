@@ -7,6 +7,7 @@ import { createZToolkit } from "./utils/ztoolkit";
 import { MCPSettingsService } from "./modules/mcpSettingsService";
 import { registerSemanticIndexColumn, unregisterSemanticIndexColumn, refreshSemanticColumn } from "./modules/semanticIndexColumn";
 import { registerSemanticSearchToolbar, registerFindSimilarMenu, unregisterSemanticSearchUI } from "./modules/semanticSearchDialog";
+import { flushNotifierCommits, flushWriteOperations } from "./modules/deferredNotifierCommitter";
 
 // Preference keys for semantic search settings
 const PREF_SEMANTIC_ENABLED = 'extensions.zotero.zotero-mcp-plugin.semantic.enabled';
