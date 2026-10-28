@@ -30,6 +30,7 @@
     "prepare-release": "node scripts/prepare-release.js",
     "release:init": "node scripts/init-release.js",
     "test": "zotero-plugin test",
+    "test:unit": "mocha",
     "test:update": "node scripts/test-update.js",
     "update-deps": "npm update --save"
   },

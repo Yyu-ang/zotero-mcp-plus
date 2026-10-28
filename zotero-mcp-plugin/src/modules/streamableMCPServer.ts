@@ -13,6 +13,7 @@ import {
   handleCreateCollection,
   handleUpdateCollection,
   handleDeleteCollection,
+  handleTrashItems,
   handleAddItemsToCollection,
   handleRemoveItemsFromCollection,
 } from './apiHandlers';
@@ -719,6 +720,26 @@ export class StreamableMCPServer {
         },
       },
       {
+        name: 'trash_item',
+        description: 'Move one or more items to Zotero Trash. Items remain recoverable until the user empties Trash; permanent deletion is not supported.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            libraryID: {
+              type: 'number',
+              description: 'Optional target Zotero library ID. Defaults to the user library when omitted.'
+            },
+            itemKeys: {
+              type: 'array',
+              items: { type: 'string' },
+              minItems: 1,
+              description: 'Item keys to move to Trash, e.g. ["ABCD1234"]'
+            },
+          },
+          required: ['itemKeys'],
+        },
+      },
+      {
         name: 'add_items_to_collection',
         description: 'Add one or more items to a collection by their item keys.',
         inputSchema: {
@@ -1065,6 +1086,11 @@ export class StreamableMCPServer {
             title: {
               type: 'string',
               description: 'For import action: display title for the attachment (defaults to the file name)'
+            },
+            linkMode: {
+              type: 'string',
+              enum: ['imported_file', 'linked_file'],
+              description: 'For import action: imported_file (default) copies the file into Zotero storage; linked_file links to the file in place without copying (personal library only; if a Linked Attachment Base Directory is configured, the path is stored relative to it)'
             }
           },
           required: ['action']
@@ -1242,7 +1268,8 @@ export class StreamableMCPServer {
     // Filter out write tools if write operations are disabled (default: disabled)
     const writeEnabled = Zotero.Prefs.get('extensions.zotero.zotero-mcp-plugin.write.enabled', true);
     const writeToolNames = new Set([
-      'write_note', 'write_tag', 'write_metadata', 'write_item',
+      'write_note', 'write_tag', 'write_metadata', 'write_item', 'add_by_identifier',
+      'trash_item',
     ]);
     const finalTools = writeEnabled === true
       ? citationFilteredTools
@@ -1345,7 +1372,7 @@ export class StreamableMCPServer {
           if (!args?.name) {
             throw new Error('name is required');
           }
-          result = await this.callCreateCollection(args);
+          result = await runSerializedWrite(() => this.callCreateCollection(args));
           break;
         }
 
@@ -1357,7 +1384,25 @@ export class StreamableMCPServer {
           if (!args?.collectionKey) {
             throw new Error('collectionKey is required');
           }
-          result = await this.callUpdateCollection(args);
+          result = await runSerializedWrite(() => this.callUpdateCollection(args));
+          break;
+        }
+
+        case 'trash_item': {
+          const writeEnabledTI = Zotero.Prefs.get('extensions.zotero.zotero-mcp-plugin.write.enabled', true);
+          if (writeEnabledTI !== true) {
+            throw new Error('Write operations are currently disabled. Please go to Zotero → Tools → Add-ons → Zotero MCP Plugin → Preferences, and enable "Write Operations" to use this feature.');
+          }
+          if (args && Object.prototype.hasOwnProperty.call(args, 'permanent')) {
+            throw new Error('The permanent option is not supported. Items can only be moved to Zotero Trash.');
+          }
+          const itemKeys = this.coerceStringArray(args?.itemKeys);
+          if (!itemKeys || itemKeys.length === 0) {
+            throw new Error(`itemKeys array is required, e.g. ["ABCD1234"]. Received: ${JSON.stringify(args?.itemKeys)}`);
+          }
+          result = await runSerializedWrite(() =>
+            this.callTrashItems({ ...args, itemKeys }),
+          );
           break;
         }
 
@@ -1369,7 +1414,7 @@ export class StreamableMCPServer {
           if (!args?.collectionKey) {
             throw new Error('collectionKey is required');
           }
-          result = await this.callDeleteCollection(args);
+          result = await runSerializedWrite(() => this.callDeleteCollection(args));
           break;
         }
 
@@ -1385,7 +1430,7 @@ export class StreamableMCPServer {
           if (!addKeys || addKeys.length === 0) {
             throw new Error(`itemKeys array is required, e.g. ["ABCD1234"]. Received: ${JSON.stringify(args?.itemKeys)}`);
           }
-          result = await this.callAddItemsToCollection({ ...args, itemKeys: addKeys });
+          result = await runSerializedWrite(() => this.callAddItemsToCollection({ ...args, itemKeys: addKeys }));
           break;
         }
 
@@ -1401,7 +1446,7 @@ export class StreamableMCPServer {
           if (!removeKeys || removeKeys.length === 0) {
             throw new Error(`itemKeys array is required, e.g. ["ABCD1234"]. Received: ${JSON.stringify(args?.itemKeys)}`);
           }
-          result = await this.callRemoveItemsFromCollection({ ...args, itemKeys: removeKeys });
+          result = await runSerializedWrite(() => this.callRemoveItemsFromCollection({ ...args, itemKeys: removeKeys }));
           break;
         }
 
@@ -1455,7 +1500,7 @@ export class StreamableMCPServer {
           if (!args?.action || !args?.content) {
             throw new Error('action and content are required');
           }
-          result = await this.callWriteNote(args);
+          result = await runSerializedWrite(() => this.callWriteNote(args));
           break;
         }
 
@@ -1467,7 +1512,7 @@ export class StreamableMCPServer {
           if (!args?.action || !args?.itemKey || !args?.tags) {
             throw new Error('action, itemKey, and tags are required');
           }
-          result = await this.callWriteTag(args);
+          result = await runSerializedWrite(() => this.callWriteTag(args));
           break;
         }
 
@@ -1482,7 +1527,7 @@ export class StreamableMCPServer {
           if (!args?.fields && !args?.creators) {
             throw new Error('At least one of fields or creators is required');
           }
-          result = await this.callWriteMetadata(args);
+          result = await runSerializedWrite(() => this.callWriteMetadata(args));
           break;
         }
 
@@ -1494,7 +1539,24 @@ export class StreamableMCPServer {
           if (!args?.action) {
             throw new Error('action is required');
           }
-          result = await this.callWriteItem(args);
+          result = await runSerializedWrite(() => this.callWriteItem(args));
+          break;
+        }
+
+        case 'add_by_identifier': {
+          // Polling a job and dry runs write nothing, so they stay available
+          // even when write operations are disabled.
+          const isReadOnlyCall = args?.jobID || args?.dryRun === true;
+          if (!isReadOnlyCall) {
+            const writeEnabled5 = Zotero.Prefs.get('extensions.zotero.zotero-mcp-plugin.write.enabled', true);
+            if (writeEnabled5 !== true) {
+              throw new Error('Write operations are currently disabled. Please go to Zotero → Tools → Add-ons → Zotero MCP Plugin → Preferences, and enable "Write Operations" to use this feature.');
+            }
+          }
+          if (!args?.jobID && !args?.identifiers && !args?.identifier) {
+            throw new Error('identifiers is required (an array of DOI / arXiv / ISBN / PMID / ADS strings)');
+          }
+          result = await this.callAddByIdentifier(args);
           break;
         }
 
@@ -1680,7 +1742,23 @@ export class StreamableMCPServer {
     // Call the dedicated item details handler
     const response = await handleGetItem({ 1: itemKey }, queryParams);
     let result = response.body ? JSON.parse(response.body) : response;
-    
+
+    // complete mode: additionally include the item's full Zotero API JSON
+    // (dateAdded/dateModified, collections, relations, extra) so complete is
+    // a strict superset of standard instead of identical to it (#96)
+    if (effectiveMode === 'complete' && result && typeof result === 'object' && !result.error) {
+      try {
+        const resolvedLibraryID = (libraryID !== undefined && libraryID !== null)
+          ? Number(libraryID) : Zotero.Libraries.userLibraryID;
+        const item = await Zotero.Items.getByLibraryAndKeyAsync(resolvedLibraryID, itemKey);
+        if (item) {
+          result.apiJSON = item.toJSON();
+        }
+      } catch (e) {
+        ztoolkit.log(`[StreamableMCP] get_item_details complete-mode toJSON failed: ${e}`, 'warn');
+      }
+    }
+
     // Add mode information to metadata
     if (result && typeof result === 'object') {
       result.metadata = {
@@ -1689,7 +1767,7 @@ export class StreamableMCPServer {
         appliedModeConfig: this.getItemDetailsModeConfiguration(effectiveMode)
       };
     }
-    
+
     return result;
   }
 
@@ -1828,6 +1906,11 @@ export class StreamableMCPServer {
   private async callUpdateCollection(args: any): Promise<any> {
     const { collectionKey, ...body } = args;
     const response = await handleUpdateCollection({ 1: collectionKey }, body);
+    return response.body ? JSON.parse(response.body) : response;
+  }
+
+  private async callTrashItems(args: any): Promise<any> {
+    const response = await handleTrashItems({}, args);
     return response.body ? JSON.parse(response.body) : response;
   }
 
@@ -2350,7 +2433,9 @@ export class StreamableMCPServer {
             }
           }
 
-          await note.saveTx();
+          const notifierQueue = createNotifierQueue();
+          await note.saveTx(notifierSaveOptions(notifierQueue));
+          const notification = await commitNotifierQueue(notifierQueue, `create note ${note.key}`);
 
           ztoolkit.log(`[StreamableMCP] Created note ${note.key}${parentKey ? ' attached to ' + parentKey : ' (standalone)'}`);
 
@@ -2368,6 +2453,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `Note created successfully (key: ${note.key})`
             }
           };
@@ -2396,7 +2482,9 @@ export class StreamableMCPServer {
             }
           }
 
-          await existingNote.saveTx();
+          const notifierQueue = createNotifierQueue();
+          await existingNote.saveTx(notifierSaveOptions(notifierQueue));
+          const notification = await commitNotifierQueue(notifierQueue, `update note ${noteKey}`);
 
           ztoolkit.log(`[StreamableMCP] Updated note ${noteKey}`);
 
@@ -2412,6 +2500,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `Note ${noteKey} updated successfully`
             }
           };
@@ -2442,7 +2531,9 @@ export class StreamableMCPServer {
             }
           }
 
-          await existingNote.saveTx();
+          const notifierQueue = createNotifierQueue();
+          await existingNote.saveTx(notifierSaveOptions(notifierQueue));
+          const notification = await commitNotifierQueue(notifierQueue, `append note ${noteKey}`);
 
           ztoolkit.log(`[StreamableMCP] Appended to note ${noteKey}`);
 
@@ -2459,6 +2550,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `Content appended to note ${noteKey} successfully`
             }
           };
@@ -2523,7 +2615,9 @@ export class StreamableMCPServer {
           throw new Error(`Unknown action: ${action}. Use add, remove, or set.`);
       }
 
-      await item.saveTx();
+      const notifierQueue = createNotifierQueue();
+      await item.saveTx(notifierSaveOptions(notifierQueue));
+      const notification = await commitNotifierQueue(notifierQueue, `write tags on ${itemKey}`);
 
       const afterTags = item.getTags().map((t: any) => t.tag);
 
@@ -2540,6 +2634,7 @@ export class StreamableMCPServer {
         },
         metadata: {
           extractedAt: new Date().toISOString(),
+          notificationStatus: notification.status,
           message: `Tags ${action === 'add' ? 'added to' : action === 'remove' ? 'removed from' : 'set on'} item ${itemKey}`
         }
       };
@@ -2556,7 +2651,10 @@ export class StreamableMCPServer {
    * Handle write_metadata tool calls: update fields and creators on items
    */
   private async callWriteMetadata(args: any): Promise<any> {
-    const { itemKey, fields, creators, libraryID = Zotero.Libraries.userLibraryID } = args;
+    const { itemKey, fields, creators } = args;
+    const libraryID = args.libraryID === 0 || args.libraryID === undefined || args.libraryID === null
+      ? Zotero.Libraries.userLibraryID
+      : args.libraryID;
 
     try {
       const item = await Zotero.Items.getByLibraryAndKeyAsync(
@@ -2613,7 +2711,9 @@ export class StreamableMCPServer {
         afterCreators = creators;
       }
 
-      await item.saveTx();
+      const notifierQueue = createNotifierQueue();
+      await item.saveTx(notifierSaveOptions(notifierQueue));
+      const notification = await commitNotifierQueue(notifierQueue, `update metadata on ${itemKey}`);
 
       ztoolkit.log(`[StreamableMCP] Updated metadata on ${itemKey}: fields=[${Object.keys(updatedFields).join(', ')}], creators=${creatorsUpdated}`);
 
@@ -2627,6 +2727,7 @@ export class StreamableMCPServer {
         },
         metadata: {
           extractedAt: new Date().toISOString(),
+          notificationStatus: notification.status,
           message: `Metadata updated on item ${itemKey}`
         }
       };
@@ -2643,7 +2744,7 @@ export class StreamableMCPServer {
    * Handle write_item tool calls: create items, reparent attachments, and import files
    */
   private async callWriteItem(args: any): Promise<any> {
-    const { action, itemType, fields, creators, tags, attachmentKeys, parentKey, filePath, parentItemKey, title, libraryID = Zotero.Libraries.userLibraryID } = args;
+    const { action, itemType, fields, creators, tags, attachmentKeys, parentKey, filePath, parentItemKey, title, linkMode, libraryID = Zotero.Libraries.userLibraryID } = args;
 
     try {
       switch (action) {
@@ -2688,31 +2789,42 @@ export class StreamableMCPServer {
             }
           }
 
-          await item.saveTx();
-
-          ztoolkit.log(`[StreamableMCP] Created item ${item.key} (type: ${itemType})`);
-
-          // Re-parent attachments if provided
+          const notifierQueue = createNotifierQueue();
           const reparentedAttachments: string[] = [];
-          if (attachmentKeys && Array.isArray(attachmentKeys)) {
-            for (const attKey of attachmentKeys) {
-              const attachment = await Zotero.Items.getByLibraryAndKeyAsync(
-                libraryID, attKey
-              );
-              if (!attachment) {
-                ztoolkit.log(`[StreamableMCP] Attachment not found in library ${libraryID}: ${attKey}`, 'warn');
-                continue;
+          let writeFailed = false;
+          let writeError: unknown;
+
+          try {
+            await item.saveTx(notifierSaveOptions(notifierQueue));
+            ztoolkit.log(`[StreamableMCP] Created item ${item.key} (type: ${itemType})`);
+
+            // Re-parent attachments if provided
+            if (attachmentKeys && Array.isArray(attachmentKeys)) {
+              for (const attKey of attachmentKeys) {
+                const attachment = await Zotero.Items.getByLibraryAndKeyAsync(
+                  libraryID, attKey
+                );
+                if (!attachment) {
+                  ztoolkit.log(`[StreamableMCP] Attachment not found in library ${libraryID}: ${attKey}`, 'warn');
+                  continue;
+                }
+                if (!attachment.isAttachment()) {
+                  ztoolkit.log(`[StreamableMCP] Item ${attKey} is not an attachment (type: ${attachment.itemType}), skipping`, 'warn');
+                  continue;
+                }
+                attachment.parentKey = item.key;
+                await attachment.saveTx(notifierSaveOptions(notifierQueue));
+                reparentedAttachments.push(attKey);
+                ztoolkit.log(`[StreamableMCP] Re-parented attachment ${attKey} under ${item.key}`);
               }
-              if (!attachment.isAttachment()) {
-                ztoolkit.log(`[StreamableMCP] Item ${attKey} is not an attachment (type: ${attachment.itemType}), skipping`, 'warn');
-                continue;
-              }
-              attachment.parentKey = item.key;
-              await attachment.saveTx();
-              reparentedAttachments.push(attKey);
-              ztoolkit.log(`[StreamableMCP] Re-parented attachment ${attKey} under ${item.key}`);
             }
+          } catch (error) {
+            writeFailed = true;
+            writeError = error;
           }
+
+          const notification = await commitNotifierQueue(notifierQueue, `create item ${item.key}`);
+          if (writeFailed) throw writeError;
 
           return {
             action: 'create',
@@ -2728,6 +2840,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `Item created (key: ${item.key}, type: ${itemType})${reparentedAttachments.length > 0 ? `, ${reparentedAttachments.length} attachment(s) attached` : ''}`
             }
           };
@@ -2753,6 +2866,7 @@ export class StreamableMCPServer {
           }
 
           const results: Array<{ key: string; success: boolean; error?: string }> = [];
+          const notifierQueue = createNotifierQueue();
           for (const attKey of attachmentKeys) {
             try {
               const attachment = await Zotero.Items.getByLibraryAndKeyAsync(
@@ -2767,7 +2881,7 @@ export class StreamableMCPServer {
                 continue;
               }
               attachment.parentKey = parentKey;
-              await attachment.saveTx();
+              await attachment.saveTx(notifierSaveOptions(notifierQueue));
               results.push({ key: attKey, success: true });
               ztoolkit.log(`[StreamableMCP] Re-parented ${attKey} under ${parentKey}`);
             } catch (attError) {
@@ -2775,6 +2889,7 @@ export class StreamableMCPServer {
             }
           }
 
+          const notification = await commitNotifierQueue(notifierQueue, `reparent items under ${parentKey}`);
           const successCount = results.filter(r => r.success).length;
 
           return {
@@ -2788,6 +2903,7 @@ export class StreamableMCPServer {
             },
             metadata: {
               extractedAt: new Date().toISOString(),
+              notificationStatus: notification.status,
               message: `Re-parented ${successCount}/${attachmentKeys.length} item(s) under ${parentKey}`
             }
           };
@@ -2816,14 +2932,31 @@ export class StreamableMCPServer {
             throw new Error(`Parent ${importParentKey} is not a regular item (type: ${parentItem.itemType}), cannot attach files`);
           }
 
-          // Import file as attachment
-          const attachment = await Zotero.Attachments.importFromFile({
+          const effectiveLinkMode = linkMode || 'imported_file';
+          if (effectiveLinkMode !== 'imported_file' && effectiveLinkMode !== 'linked_file') {
+            throw new Error(`Invalid linkMode: ${linkMode}. Use imported_file (copy into Zotero storage) or linked_file (link in place).`);
+          }
+          if (effectiveLinkMode === 'linked_file' && parentItem.libraryID !== Zotero.Libraries.userLibraryID) {
+            // Zotero core rejects linked files outside the personal library;
+            // check the resolved parent's library, matching core's constraint
+            throw new Error('linked_file attachments are only supported in the personal library (Zotero limitation); use imported_file for group libraries');
+          }
+
+          // Import or link file as attachment (#93: linked_file keeps the
+          // file in place instead of copying it into Zotero storage)
+          const notifierQueue = createNotifierQueue();
+          const attachmentOptions = {
             file: filePath,
             parentItemID: parentItem.id,
-            title: title || filePath.split(/[\\/]/).pop() || 'Imported Attachment'
-          });
+            title: title || filePath.split(/[\\/]/).pop() || 'Imported Attachment',
+            saveOptions: notifierSaveOptions(notifierQueue)
+          };
+          const attachment = effectiveLinkMode === 'linked_file'
+            ? await Zotero.Attachments.linkFromFile(attachmentOptions)
+            : await Zotero.Attachments.importFromFile(attachmentOptions);
+          const notification = await commitNotifierQueue(notifierQueue, `import attachment ${attachment.key}`);
 
-          ztoolkit.log(`[StreamableMCP] Imported file as attachment ${attachment.key} under ${importParentKey}`);
+          ztoolkit.log(`[StreamableMCP] ${effectiveLinkMode === 'linked_file' ? 'Linked' : 'Imported'} file as attachment ${attachment.key} under ${importParentKey}`);
 
           return {
             action: 'import',
@@ -2832,11 +2965,13 @@ export class StreamableMCPServer {
               attachmentKey: attachment.key,
               parentItemKey: importParentKey,
               filePath,
+              linkMode: effectiveLinkMode,
               title: attachment.getField('title')
             },
             metadata: {
               extractedAt: new Date().toISOString(),
-              message: `File imported as attachment (key: ${attachment.key}) under parent ${importParentKey}`
+              notificationStatus: notification.status,
+              message: `File ${effectiveLinkMode === 'linked_file' ? 'linked' : 'imported'} as attachment (key: ${attachment.key}) under parent ${importParentKey}`
             }
           };
         }
@@ -2850,6 +2985,386 @@ export class StreamableMCPServer {
         success: false,
         error: String(error)
       };
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // add_by_identifier
+  // ---------------------------------------------------------------------
+
+  /** Background jobs for add_by_identifier, keyed by job ID. */
+  private static identifierJobs = new Map<string, any>();
+  private static identifierJobSeq = 0;
+  private static readonly MAX_IDENTIFIERS_PER_CALL = 200;
+  private static readonly MAX_SYNC_IDENTIFIERS = 3;
+
+  /**
+   * Resolve DOI / arXiv / ISBN / PMID / ADS identifiers through Zotero's own
+   * search translators and save the resulting items.
+   *
+   * Mirrors chrome/content/zotero/lookup.js (the "Add Item by Identifier"
+   * button): extractIdentifiers → Zotero.Translate.Search → setIdentifier →
+   * getTranslators → setTranslator → translate(). Item types and metadata are
+   * therefore exactly what Zotero itself produces; nothing is invented here.
+   */
+  private async callAddByIdentifier(args: any): Promise<any> {
+    // Polling an existing job
+    if (args?.jobID) {
+      const job = StreamableMCPServer.identifierJobs.get(args.jobID);
+      if (!job) {
+        throw new Error(`Job not found: ${args.jobID}. Jobs are kept only for the current Zotero session.`);
+      }
+      return this.summarizeIdentifierJob(job);
+    }
+
+    const raw = args.identifiers ?? args.identifier;
+    const inputs = (Array.isArray(raw) ? raw : String(raw).split(/[\r\n]+/))
+      .map((s: any) => String(s).trim())
+      .filter((s: string) => s.length > 0);
+
+    if (!inputs.length) {
+      throw new Error('No identifiers provided');
+    }
+    if (inputs.length > StreamableMCPServer.MAX_IDENTIFIERS_PER_CALL) {
+      throw new Error(`Too many identifiers (${inputs.length}). Send at most ${StreamableMCPServer.MAX_IDENTIFIERS_PER_CALL} per call.`);
+    }
+
+    const libraryID = args.libraryID ?? Zotero.Libraries.userLibraryID;
+    let collections: number[] | false = false;
+    let collectionName: string | null = null;
+    if (args.collectionKey) {
+      const collection = await Zotero.Collections.getByLibraryAndKeyAsync(libraryID, args.collectionKey);
+      if (!collection) {
+        throw new Error(`Collection not found in library ${libraryID}: ${args.collectionKey}`);
+      }
+      collections = [(collection as any).id];
+      collectionName = (collection as any).name;
+    }
+
+    const opts = {
+      libraryID,
+      collections,
+      saveAttachments: args.saveAttachments !== false,
+      skipExisting: args.skipExisting !== false,
+      fileExisting: args.fileExisting === true,
+      dryRun: args.dryRun === true,
+      titleDuplicates: args.titleDuplicates || 'flag',
+      delayMs: typeof args.delayMs === 'number' ? args.delayMs : 500
+    };
+
+    const job: any = {
+      id: `identifier-job-${++StreamableMCPServer.identifierJobSeq}`,
+      state: 'running',
+      total: inputs.length,
+      done: 0,
+      results: [],
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      target: { libraryID, collectionKey: args.collectionKey || null, collectionName }
+    };
+    StreamableMCPServer.identifierJobs.set(job.id, job);
+    this.pruneIdentifierJobs();
+
+    const run = this.runIdentifierJob(job, inputs, opts);
+
+    // Long batches would blow past the MCP keep-alive window, so anything
+    // bigger than a couple of lookups is handed back as a pollable job.
+    const runAsync = args.async === true
+      || (!opts.dryRun && inputs.length > StreamableMCPServer.MAX_SYNC_IDENTIFIERS);
+
+    if (!runAsync) {
+      await run;
+      return this.summarizeIdentifierJob(job);
+    }
+
+    return {
+      success: true,
+      data: {
+        jobID: job.id,
+        state: job.state,
+        total: job.total,
+        target: job.target
+      },
+      metadata: {
+        extractedAt: new Date().toISOString(),
+        message: `Started background import of ${job.total} identifier(s). Poll with add_by_identifier {"jobID": "${job.id}"}.`
+      }
+    };
+  }
+
+  private async runIdentifierJob(job: any, inputs: string[], opts: any): Promise<void> {
+    try {
+      for (const input of inputs) {
+        try {
+          job.results.push(await this.importOneIdentifier(input, opts));
+        } catch (error) {
+          ztoolkit.log(`[StreamableMCP] add_by_identifier failed for "${input}": ${error}`, 'error');
+          job.results.push({ input, status: 'error', error: String(error) });
+        }
+        job.done++;
+        if (opts.delayMs > 0 && job.done < job.total) {
+          await new Promise(resolve => setTimeout(resolve, opts.delayMs));
+        }
+      }
+      job.state = 'done';
+    } catch (error) {
+      job.state = 'error';
+      job.error = String(error);
+    } finally {
+      job.finishedAt = new Date().toISOString();
+    }
+  }
+
+  private async importOneIdentifier(input: string, opts: any): Promise<any> {
+    const identifiers = (Zotero.Utilities as any).extractIdentifiers(input);
+    if (!identifiers.length) {
+      return { input, status: 'error', error: 'NO_IDENTIFIER_FOUND' };
+    }
+    if (identifiers.length > 1) {
+      // One entry should mean one item; anything else is ambiguous input.
+      return {
+        input,
+        status: 'error',
+        error: 'AMBIGUOUS_INPUT',
+        parsed: identifiers.map((id: any) => this.describeIdentifier(id))
+      };
+    }
+
+    const identifier = identifiers[0];
+    const parsed = this.describeIdentifier(identifier);
+
+    if (opts.dryRun) {
+      return { input, status: 'parsed', identifier: parsed };
+    }
+
+    if (opts.skipExisting) {
+      const existing = await this.findItemByIdentifier(opts.libraryID, identifier);
+      if (existing) {
+        let addedToCollection = false;
+        // The only path in this tool that touches an item already in the
+        // library, so it has to be asked for explicitly.
+        if (opts.fileExisting && opts.collections) {
+          const current = existing.getCollections();
+          const missing = opts.collections.filter((cid: number) => !current.includes(cid));
+          if (missing.length) {
+            for (const cid of missing) {
+              existing.addToCollection(cid);
+            }
+            await existing.saveTx();
+            addedToCollection = true;
+          }
+        }
+        return {
+          input,
+          identifier: parsed,
+          status: 'exists',
+          addedToCollection,
+          item: this.summarizeIdentifierItem(existing)
+        };
+      }
+    }
+
+    const translate = new (Zotero as any).Translate.Search();
+    translate.setIdentifier(identifier);
+    // Be lenient about translators, exactly like lookup.js
+    const translators = await translate.getTranslators();
+    if (!translators || !translators.length) {
+      return { input, identifier: parsed, status: 'error', error: 'NO_TRANSLATOR' };
+    }
+    translate.setTranslator(translators);
+
+    const newItems = await translate.translate({
+      libraryID: opts.libraryID,
+      collections: opts.collections,
+      saveAttachments: opts.saveAttachments
+    });
+
+    if (!newItems || !newItems.length) {
+      return { input, identifier: parsed, status: 'error', error: 'NO_ITEM_RETURNED' };
+    }
+
+    ztoolkit.log(`[StreamableMCP] add_by_identifier imported ${newItems[0].key} for ${parsed}`);
+
+    // A preprint and its published version share no identifier, so the check
+    // above cannot see them as the same work. The title is only known after
+    // resolution, hence this second pass.
+    let duplicatesOf: any[] = [];
+    if (opts.titleDuplicates !== 'off') {
+      duplicatesOf = await this.findItemsByTitle(opts.libraryID, newItems[0]);
+    }
+
+    if (duplicatesOf.length && opts.titleDuplicates === 'skip') {
+      const imported = newItems[0];
+      imported.deleted = true; // to the trash, not erased
+      await imported.saveTx();
+      return {
+        input,
+        identifier: parsed,
+        status: 'duplicate_trashed',
+        trashedItemKey: imported.key,
+        duplicateOf: duplicatesOf,
+        item: this.summarizeIdentifierItem(imported)
+      };
+    }
+
+    return {
+      input,
+      identifier: parsed,
+      status: 'imported',
+      item: this.summarizeIdentifierItem(newItems[0]),
+      ...(duplicatesOf.length ? { possibleDuplicateOf: duplicatesOf } : {}),
+      extraItems: newItems.slice(1).map((i: any) => this.summarizeIdentifierItem(i))
+    };
+  }
+
+  /**
+   * Find other regular items in the library whose title normalizes to the same
+   * string. Deliberately exact-after-normalization rather than fuzzy: catching
+   * "preprint vs published version" is worth it, guessing is not.
+   */
+  private async findItemsByTitle(libraryID: number, item: any): Promise<any[]> {
+    const normalize = (value: string) => String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9一-鿿]+/g, ' ')
+      .trim();
+
+    const title = item.getField('title');
+    const target = normalize(title);
+    if (target.length < 8) return [];
+
+    // Cheap candidate filter, then compare normalized titles in full: a
+    // 'contains' search cannot survive punctuation differences on its own.
+    const tokens = target.split(' ').filter((t: string) => t.length >= 5);
+    const probe = tokens.sort((a: string, b: string) => b.length - a.length)[0] || target.slice(0, 20);
+
+    try {
+      const search = new Zotero.Search();
+      (search as any).libraryID = libraryID;
+      search.addCondition('noChildren', 'true');
+      search.addCondition('title', 'contains', probe);
+      const ids = await search.search();
+      if (!ids || !ids.length) return [];
+
+      const candidates = await Zotero.Items.getAsync(ids);
+      return candidates
+        .filter((c: any) => c.id !== item.id && c.isRegularItem() && !c.deleted)
+        .filter((c: any) => normalize(c.getField('title')) === target)
+        .map((c: any) => this.summarizeIdentifierItem(c));
+    } catch (error) {
+      ztoolkit.log(`[StreamableMCP] add_by_identifier title duplicate check failed: ${error}`, 'warn');
+      return [];
+    }
+  }
+
+  /**
+   * Look for an item already in the library carrying this identifier, so that
+   * repeated calls do not pile up duplicates.
+   */
+  private async findItemByIdentifier(libraryID: number, identifier: any): Promise<any> {
+    const conditions: Array<[string, string, string]> = [];
+    if (identifier.DOI) conditions.push(['DOI', 'is', identifier.DOI]);
+    if (identifier.ISBN) conditions.push(['ISBN', 'is', identifier.ISBN]);
+    if (identifier.arXiv) {
+      conditions.push(['extra', 'contains', `arXiv:${identifier.arXiv}`]);
+      conditions.push(['url', 'contains', `arxiv.org/abs/${identifier.arXiv}`]);
+    }
+    if (identifier.PMID && !Array.isArray(identifier.PMID)) {
+      conditions.push(['extra', 'contains', `PMID: ${identifier.PMID}`]);
+    }
+    if (identifier.adsBibcode) conditions.push(['extra', 'contains', identifier.adsBibcode]);
+
+    for (const [field, operator, value] of conditions) {
+      try {
+        const search = new Zotero.Search();
+        // Settable at runtime; zotero-types marks it read-only.
+        (search as any).libraryID = libraryID;
+        search.addCondition('noChildren', 'true');
+        search.addCondition(field as any, operator as any, value);
+        const ids = await search.search();
+        if (ids && ids.length) {
+          const items = await Zotero.Items.getAsync(ids);
+          const item = items.find((i: any) => i.isRegularItem());
+          if (item) return item;
+        }
+      } catch (error) {
+        ztoolkit.log(`[StreamableMCP] add_by_identifier duplicate check failed on ${field}: ${error}`, 'warn');
+      }
+    }
+    return null;
+  }
+
+  private describeIdentifier(identifier: any): string {
+    if (!identifier) return '';
+    for (const key of ['DOI', 'arXiv', 'ISBN', 'PMID', 'adsBibcode']) {
+      const value = identifier[key];
+      if (value) return `${key}:${Array.isArray(value) ? value.join(',') : value}`;
+    }
+    return JSON.stringify(identifier);
+  }
+
+  private summarizeIdentifierItem(item: any): any {
+    const summary: any = {
+      itemKey: item.key,
+      itemType: Zotero.ItemTypes.getName(item.itemTypeID),
+      title: item.getField('title'),
+      date: item.getField('date'),
+      DOI: item.getField('DOI') || '',
+      url: item.getField('url') || '',
+      extra: item.getField('extra') || ''
+    };
+    for (const field of ['publicationTitle', 'proceedingsTitle', 'repository', 'publisher']) {
+      try {
+        const value = item.getField(field);
+        if (value) {
+          summary.venue = value;
+          break;
+        }
+      } catch (error) {
+        // Field is not valid for this item type
+      }
+    }
+    return summary;
+  }
+
+  private summarizeIdentifierJob(job: any): any {
+    const counts: Record<string, number> = {};
+    const itemTypes: Record<string, number> = {};
+    for (const row of job.results) {
+      counts[row.status] = (counts[row.status] || 0) + 1;
+      if (row.item?.itemType) {
+        itemTypes[row.item.itemType] = (itemTypes[row.item.itemType] || 0) + 1;
+      }
+    }
+    return {
+      success: job.state !== 'error',
+      data: {
+        jobID: job.id,
+        state: job.state,
+        total: job.total,
+        done: job.done,
+        counts,
+        itemTypes,
+        target: job.target,
+        results: job.results
+      },
+      metadata: {
+        extractedAt: new Date().toISOString(),
+        startedAt: job.startedAt,
+        finishedAt: job.finishedAt,
+        message: job.state === 'running'
+          ? `Import in progress: ${job.done}/${job.total}. Poll again with jobID ${job.id}.`
+          : `Import ${job.state}: ${job.done}/${job.total} processed.`
+      }
+    };
+  }
+
+  /** Keep at most 20 finished jobs around. */
+  private pruneIdentifierJobs(): void {
+    const finished = Array.from(StreamableMCPServer.identifierJobs.values())
+      .filter((job: any) => job.state !== 'running');
+    if (finished.length <= 20) return;
+    for (const job of finished.slice(0, finished.length - 20)) {
+      StreamableMCPServer.identifierJobs.delete(job.id);
     }
   }
 
@@ -3066,7 +3581,9 @@ export class StreamableMCPServer {
         'write_note',
         'write_tag',
         'write_metadata',
-        'write_item'
+        'write_item',
+        'add_by_identifier',
+        'trash_item'
       ],
       externalTools: getToolRegistry().getRegisteredTools().map(t => t.name),
       transport: {
@@ -3156,7 +3673,7 @@ export class StreamableMCPServer {
         fields: ['key', 'title', 'creators', 'date', 'itemType']
       },
       'preview': {
-        fields: ['key', 'title', 'creators', 'date', 'itemType', 'abstractNote', 'tags', 'collections']
+        fields: ['key', 'title', 'creators', 'date', 'itemType', 'abstractNote', 'extra', 'tags', 'collections']
       },
       'standard': {
         fields: null // Include most fields (default behavior)

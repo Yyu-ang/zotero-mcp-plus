@@ -264,7 +264,7 @@ Get semantic search service status and index statistics. No parameters required.
 Access cached full-text content database (read-only).
 - `action` (required: list/search/get/stats), `query`, `itemKeys`, `limit`
 
-### 5. Write Operations (4 tools, can be disabled in preferences)
+### 5. Write Operations (6 tools, can be disabled in preferences)
 
 #### `write_note`
 Create or modify Zotero notes. Supports Markdown auto-conversion to HTML.
@@ -279,8 +279,16 @@ Update metadata fields on items (title, abstract, date, DOI, creators, etc.).
 - `itemKey` (required), `fields`, `creators`
 
 #### `write_item`
-Create new items or reparent existing attachments.
-- `action` (required: create/reparent), `itemType`, `fields`, `creators`, `tags`, `attachmentKeys`, `parentKey`
+Create new items, reparent existing attachments, or import local files as attachments.
+- `action` (required: create/reparent/import), `itemType`, `fields`, `creators`, `tags`, `attachmentKeys`, `parentKey`, `filePath`, `parentItemKey`, `title`, `linkMode` (import: `imported_file` copies into Zotero storage, `linked_file` links in place — personal library only), `libraryID`
+
+#### `add_by_identifier`
+Import items by identifier (DOI, arXiv, ISBN, PMID, ADS bibcode) using Zotero's native resolvers — the same pipeline as the desktop "magic wand", including translator metadata and automatic attachment fetching.
+- `identifiers` (required), `libraryID`, `collectionKey`, `saveAttachments`, `duplicates`, `titleDuplicates`, `dryRun`, `async`, `jobID`
+
+#### `trash_item`
+Move one or more items to Zotero Trash. Items stay recoverable until the user empties Trash; permanent deletion is not supported (`permanent` is rejected).
+- `itemKeys` (required, array of item keys; deduplicated), `libraryID`
 
 ### 6. Citation & Bibliography Export (5 tools)
 

@@ -18,6 +18,7 @@ let itemNotifierID: string | null = null;
 // Debounce timer for auto-update
 let autoUpdateDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const AUTO_UPDATE_DEBOUNCE_MS = 5000; // Wait 5 seconds after last change before updating
+const AUTO_UPDATE_RETRY_MS = 60000; // Re-check interval when a build is already in flight (#95)
 
 // Queue of item keys to update
 const pendingAutoUpdateKeys = new Set<string>();
@@ -88,6 +89,22 @@ async function processPendingAutoUpdates() {
     const isReady = await semanticService.isReady();
     if (!isReady) {
       ztoolkit.log("[MCP Plugin] Semantic service not ready, skipping auto-update");
+      return;
+    }
+
+    // #95: same guards as triggerAutoIndexBuild — never launch the build
+    // pipeline while another build is in flight. Re-queue the keys and
+    // retry later instead of silently dropping them.
+    // (getIndexProgress() is the in-memory copy — deliberately NOT
+    // getStats(), whose full-table scans are part of the problem.)
+    if (semanticService.isBuildActive() ||
+        semanticService.getIndexProgress().status === 'indexing') {
+      ztoolkit.log("[MCP Plugin] Build in flight, deferring auto-update");
+      for (const k of keysToUpdate) pendingAutoUpdateKeys.add(k);
+      autoUpdateDebounceTimer = trackedSetTimeout(() => {
+        autoUpdateDebounceTimer = null;
+        processPendingAutoUpdates();
+      }, AUTO_UPDATE_RETRY_MS);
       return;
     }
 
@@ -211,6 +228,10 @@ function registerItemNotifier() {
           // Only index regular items (not attachments, notes, etc.)
           if (item.isRegularItem?.()) {
             scheduleAutoUpdate(item.key);
+          } else if (item.isAttachment?.() && item.parentItemKey) {
+            // #100: a PDF attached after its parent was indexed must mark
+            // the parent dirty — the parent's dateModified doesn't change
+            scheduleAutoUpdate(item.parentItemKey);
           }
         }
       } else if (event === 'delete') {
@@ -505,11 +526,24 @@ async function onMainWindowUnload(win: Window): Promise<void> {
   ztoolkit.unregisterAll();
 }
 
-function onShutdown(): void {
+async function onShutdown(): Promise<void> {
   ztoolkit.log("[MCP Plugin] ======== SHUTDOWN START ========");
 
   // Set shutdown flag to prevent new async operations
   isShuttingDown = true;
+
+  // Stop accepting writes, then give already-committed notifier queues a
+  // bounded chance to finish while observers are still registered.
+  try {
+    if (httpServer.isServerRunning()) {
+      httpServer.stop();
+    }
+    await flushWriteOperations();
+    await flushNotifierCommits();
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    ztoolkit.log(`[MCP Plugin] Error flushing notifier queues: ${err.message}`, "error");
+  }
 
   // Clear all pending timeouts immediately
   ztoolkit.log("[MCP Plugin] [SHUTDOWN 1/7] Clearing pending timeouts...");

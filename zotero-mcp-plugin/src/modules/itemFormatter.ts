@@ -32,22 +32,17 @@ export async function formatItem(
   if (fields) {
     fieldsToExport = fields;
   } else {
-    fieldsToExport = [
-      "title",
-      "creators",
-      "date",
-      "itemType",
-      "publicationTitle",
-      "volume",
-      "issue",
-      "pages",
-      "DOI",
-      "url",
-      "abstractNote",
-      "tags",
-      "notes",
-      "attachments",
-    ];
+    // Type-aware default: every field valid for this item's type (bookTitle,
+    // proceedingsTitle, thesisType, university, institution, extra, ...) plus
+    // children (#96, #91). "title" is kept explicitly: note/attachment item
+    // types have no itemData fields but their title still resolves via
+    // getField's special cases.
+    const typeFields = Zotero.ItemFields.getItemTypeFields(item.itemTypeID).map(
+      (fieldID: number) => Zotero.ItemFields.getName(fieldID) as string,
+    );
+    fieldsToExport = Array.from(
+      new Set(["title", ...typeFields, "creators", "tags", "notes", "attachments"]),
+    );
   }
   const formattedItem: Record<string, any> = {
     key: item.key,
@@ -212,6 +207,10 @@ export async function formatItem(
             ztoolkit.log(`[ItemFormatter] Error getting date: ${e}`, "error");
             formattedItem[field] = "";
           }
+          break;
+        case "itemType":
+          // Already set from item.itemType above; item.getField("itemType")
+          // returns '' in Zotero core and would clobber it (#96)
           break;
         default:
           try {
