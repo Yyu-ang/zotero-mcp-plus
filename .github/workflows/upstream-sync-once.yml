@@ -32,6 +32,10 @@ jobs:
           git merge --no-ff --no-edit -X ours "$UPSTREAM_SHA"
           echo "Integrated upstream revision: $UPSTREAM_SHA"
           git show --stat --oneline --summary HEAD
+      - name: Push integration candidate to isolated branch (review required)
+        shell: bash
+        run: |
+          git push origin HEAD:refs/heads/sync/upstream-2026-10-28
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -43,7 +47,3 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: Push verified merge to isolated branch
-        shell: bash
-        run: |
-          git push origin HEAD:refs/heads/sync/upstream-2026-10-28
