@@ -93,6 +93,7 @@ function bindOAuthPreferences(doc: Document) {
   const hidePassword = doc.querySelector("#zotero-mcp-oauth-hide") as HTMLButtonElement;
   const copyPassword = doc.querySelector("#zotero-mcp-oauth-copy") as HTMLButtonElement;
   const settings = doc.querySelector("#zotero-mcp-oauth-settings") as HTMLElement;
+  const oauthPortInput = doc.querySelector("#zotero-mcp-oauth-port") as HTMLInputElement;
   const authorizationURL = doc.querySelector("#zotero-mcp-oauth-import-url") as HTMLTextAreaElement;
   const fixedID = doc.querySelector("#zotero-mcp-oauth-fixed-id") as HTMLInputElement;
   const fixedRedirect = doc.querySelector("#zotero-mcp-oauth-fixed-redirect") as HTMLInputElement;
@@ -104,6 +105,36 @@ function bindOAuthPreferences(doc: Document) {
       !showPassword || !hidePassword || !copyPassword || !settings) return;
 
   if (!authorizationURL || !fixedID || !fixedRedirect || !saveFixed || !fixedStatus || !fixedList) return;
+  if (oauthPortInput) {
+    const storedPort = Number(Zotero.Prefs.get(`${prefix}.port`, true));
+    oauthPortInput.value = storedPort > 0 ? String(storedPort) : "";
+    oauthPortInput.addEventListener("change", () => {
+      const raw = oauthPortInput.value.trim();
+      const parsed = Number(raw);
+      if (raw === "") {
+        Zotero.Prefs.set(`${prefix}.port`, 0, true);
+      } else if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+        addon.data.prefs!.window.alert("The OAuth port must be between 1 and 65535, or empty for MCP port + 1.");
+        oauthPortInput.value = "";
+        Zotero.Prefs.set(`${prefix}.port`, 0, true);
+      } else {
+        Zotero.Prefs.set(`${prefix}.port`, parsed, true);
+      }
+      // The listener binds at start: rebind so the new port takes effect.
+      const server = addon.data.httpServer;
+      if (server?.isServerRunning()) {
+        const rawMcpPort = Zotero.Prefs.get(
+          "extensions.zotero.zotero-mcp-plugin.mcp.server.port", true,
+        );
+        try {
+          server.stop();
+          server.start(typeof rawMcpPort === "number" ? rawMcpPort : 23120);
+        } catch (error) {
+          addon.data.prefs!.window.alert(`Failed to restart MCP listeners: ${error}`);
+        }
+      }
+    });
+  }
   enabled.checked = oauthServer.isEnabled();
   serverUrl.value = String(Zotero.Prefs.get(`${prefix}.serverUrl`, true) || "");
   // Keep the URL/password controls visible while disabled, so OAuth can be configured before enabling.

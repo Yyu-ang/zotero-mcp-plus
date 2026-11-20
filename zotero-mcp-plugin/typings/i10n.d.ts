@@ -164,6 +164,8 @@ export type FluentMessageId =
   | 'pref-oauth-hide'
   | 'pref-oauth-import-hint'
   | 'pref-oauth-password-hint'
+  | 'pref-oauth-port-hint'
+  | 'pref-oauth-port-label'
   | 'pref-oauth-show'
   | 'pref-oauth-url-hint'
   | 'pref-oauth-url-label'

@@ -87,10 +87,14 @@ export class HttpServer {
       // Its security is determined by the socket that accepted the request,
       // never by peer IP, Host, Origin, or X-Forwarded-* headers.
       if (oauthServer.isEnabled() && serverPreferences.isRemoteAccessAllowed()) {
+        const oauthPort = serverPreferences.getOAuthPort() || port + 1;
+        if (oauthPort === port) {
+          throw new Error(`The OAuth port must differ from the MCP port (both ${port})`);
+        }
         this.oauthSocket = Cc[
           "@mozilla.org/network/server-socket;1"
         ].createInstance(Ci.nsIServerSocket);
-        this.oauthSocket.init(port + 1, false, -1);
+        this.oauthSocket.init(oauthPort, false, -1);
         this.oauthSocket.asyncListen({
           onSocketAccepted: (socket: any, transport: any) =>
             this.listener.onSocketAccepted(socket, transport, true),
@@ -98,7 +102,7 @@ export class HttpServer {
             ztoolkit.log(`[HttpServer] OAuth listener stopped (status: ${status})`);
           },
         });
-        ztoolkit.log(`[HttpServer] OAuth-authenticated endpoint: 0.0.0.0:${port + 1}/mcp`);
+        ztoolkit.log(`[HttpServer] OAuth-authenticated endpoint: 0.0.0.0:${oauthPort}/mcp`);
       }
 
       Zotero.debug(

@@ -4,6 +4,7 @@ declare let ztoolkit: ZToolkit;
 
 const PREFS_PREFIX = config.prefsPrefix;
 const MCP_SERVER_PORT = `${PREFS_PREFIX}.mcp.server.port`;
+const MCP_OAUTH_PORT = `${PREFS_PREFIX}.oauth.port`;
 const MCP_SERVER_ENABLED = `${PREFS_PREFIX}.mcp.server.enabled`;
 const MCP_SERVER_ALLOW_REMOTE = `${PREFS_PREFIX}.mcp.server.allowRemote`;
 
@@ -174,6 +175,16 @@ class ServerPreferences {
         ztoolkit.log(`[ServerPreferences] [MONITOR] Monitoring completed after ${monitorCount} checks`);
       }
     }, 5000);
+  }
+
+  /** Token-protected listener port. 0 means "the MCP port + 1".
+   *  User-configurable because other Zotero plugins also bind fixed ports.
+   */
+  public getOAuthPort(): number {
+    try {
+      const port = Number(Zotero.Prefs.get(MCP_OAUTH_PORT, true));
+      return Number.isInteger(port) && port > 0 && port <= 65535 ? port : 0;
+    } catch { return 0; }
   }
 
   public getPort(): number {

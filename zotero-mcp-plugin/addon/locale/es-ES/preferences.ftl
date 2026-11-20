@@ -238,3 +238,5 @@ pref-oauth-fixed-id = ID de cliente (opcional; vacío = aleatorio)
 pref-oauth-fixed-redirect = URL de redirección (redirect_uri)
 pref-oauth-fixed-save = Guardar / reutilizar cliente
 pref-oauth-fixed-remove = Quitar
+pref-oauth-port-label = Puerto OAuth (opcional)
+pref-oauth-port-hint = Por defecto: puerto MCP + 1 (p. ej. 23121). Indícalo si otro plugin ya usa ese puerto.

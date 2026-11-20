@@ -253,3 +253,5 @@ pref-oauth-fixed-id = Client-ID (optional; leer = zufällig)
 pref-oauth-fixed-redirect = Rückruf-URL (redirect_uri)
 pref-oauth-fixed-save = Client speichern / wiederverwenden
 pref-oauth-fixed-remove = Entfernen
+pref-oauth-port-label = OAuth-Port (optional)
+pref-oauth-port-hint = Standard: MCP-Port + 1 (z. B. 23121). Wenn ein anderes Plugin diesen Port belegt, hier einen anderen eintragen.

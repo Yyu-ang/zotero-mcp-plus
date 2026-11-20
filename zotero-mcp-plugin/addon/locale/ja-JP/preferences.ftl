@@ -238,3 +238,5 @@ pref-oauth-fixed-id = クライアント ID（省略時はランダム生成）
 pref-oauth-fixed-redirect = リダイレクト URI
 pref-oauth-fixed-save = クライアントを保存／再利用
 pref-oauth-fixed-remove = 削除
+pref-oauth-port-label = OAuth ポート（任意）
+pref-oauth-port-hint = 空欄なら MCP ポート + 1（例: 23121）。他のプラグインが使用中の場合は別のポートを指定してください。

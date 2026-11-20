@@ -253,3 +253,5 @@ pref-oauth-fixed-id = 客户端 ID（可自定义；留空则随机生成）
 pref-oauth-fixed-redirect = 授权回调地址（redirect_uri）
 pref-oauth-fixed-save = 保存／复用客户端
 pref-oauth-fixed-remove = 移除
+pref-oauth-port-label = OAuth 端口（可选）
+pref-oauth-port-hint = 留空则使用 MCP 端口 + 1（例如 23121）。若该端口已被其他插件占用，可在此指定其他端口。

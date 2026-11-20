@@ -12,6 +12,7 @@ declare namespace _ZoteroTypes {
       "mcp.server.allowRemote": boolean;
       "oauth.enabled": boolean;
       "oauth.serverUrl": string;
+      "oauth.port": number;
     };
   }
 }
