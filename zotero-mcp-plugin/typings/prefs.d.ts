@@ -9,6 +9,7 @@ declare namespace _ZoteroTypes {
     PluginPrefsMap: {
       "mcp.server.enabled": boolean;
       "mcp.server.port": number;
+      "mcp.server.allowRemote": boolean;
       "oauth.enabled": boolean;
       "oauth.serverUrl": string;
     };

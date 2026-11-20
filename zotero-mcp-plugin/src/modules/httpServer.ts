@@ -73,21 +73,24 @@ export class HttpServer {
       // init方法参数：端口，是否仅允许回环地址，backlog队列大小
       // loopbackOnly=true: 仅监听 127.0.0.1
       // loopbackOnly=false: 监听 0.0.0.0 (所有接口)
-      // The unauthenticated listener must be loopback-only when OAuth is enabled.
-      const loopbackOnly = oauthServer.isEnabled() || !serverPreferences.isRemoteAccessAllowed();
+      // The local port follows the user's "allow remote access" preference.
+      // The authenticated OAuth port (port + 1) is a separate listener.
+      const loopbackOnly = !serverPreferences.isRemoteAccessAllowed();
       Zotero.debug(`[HttpServer] Binding to ${loopbackOnly ? '127.0.0.1' : '0.0.0.0'}:${port}`);
       this.serverSocket.init(port, loopbackOnly, -1);
       this.serverSocket.asyncListen(this.listener);
       this.isRunning = true;
 
-      // Separate AUTHENTICATED loopback listener for Cloudflare Tunnel.
+      // Separate AUTHENTICATED listener (port + 1) for Cloudflare Tunnel and
+      // any remote OAuth client. It exists only while OAuth is enabled AND
+      // remote access is allowed; with either switch off the port stays closed.
       // Its security is determined by the socket that accepted the request,
       // never by peer IP, Host, Origin, or X-Forwarded-* headers.
-      if (oauthServer.isEnabled()) {
+      if (oauthServer.isEnabled() && serverPreferences.isRemoteAccessAllowed()) {
         this.oauthSocket = Cc[
           "@mozilla.org/network/server-socket;1"
         ].createInstance(Ci.nsIServerSocket);
-        this.oauthSocket.init(port + 1, true, -1);
+        this.oauthSocket.init(port + 1, false, -1);
         this.oauthSocket.asyncListen({
           onSocketAccepted: (socket: any, transport: any) =>
             this.listener.onSocketAccepted(socket, transport, true),
@@ -95,7 +98,7 @@ export class HttpServer {
             ztoolkit.log(`[HttpServer] OAuth listener stopped (status: ${status})`);
           },
         });
-        ztoolkit.log(`[HttpServer] OAuth-only endpoint: 127.0.0.1:${port + 1}/mcp`);
+        ztoolkit.log(`[HttpServer] OAuth-authenticated endpoint: 0.0.0.0:${port + 1}/mcp`);
       }
 
       Zotero.debug(

@@ -368,7 +368,30 @@ function bindPrefEvents() {
   });
 
   // Bind HTML toggle switches (these need manual pref sync since they're not XUL checkboxes)
-  bindHtmlCheckbox(doc, `#zotero-prefpane-${config.addonRef}-mcp-server-allow-remote`, "extensions.zotero.zotero-mcp-plugin.mcp.server.allowRemote");
+  // "Allow remote access" changes the bind address, so the listener is restarted at once.
+  const allowRemote = doc?.querySelector(
+    `#zotero-prefpane-${config.addonRef}-mcp-server-allow-remote`,
+  ) as HTMLInputElement;
+  if (allowRemote) {
+    const allowRemotePref = "extensions.zotero.zotero-mcp-plugin.mcp.server.allowRemote";
+    const storedRemote = Zotero.Prefs.get(allowRemotePref, true);
+    allowRemote.checked = storedRemote !== false && storedRemote !== undefined;
+    allowRemote.addEventListener("change", () => {
+      Zotero.Prefs.set(allowRemotePref, allowRemote.checked, true);
+      const server = addon.data.httpServer;
+      if (!server?.isServerRunning()) return;
+      const rawPort = Zotero.Prefs.get(
+        "extensions.zotero.zotero-mcp-plugin.mcp.server.port", true,
+      );
+      const port = typeof rawPort === "number" ? rawPort : 23120;
+      try {
+        server.stop();
+        server.start(port);
+      } catch (error) {
+        addon.data.prefs!.window.alert(`Failed to rebind the MCP listener: ${error}`);
+      }
+    });
+  }
   bindOAuthPreferences(doc);
   bindHtmlCheckbox(doc, `#zotero-prefpane-${config.addonRef}-include-metadata`, "extensions.zotero.zotero-mcp-plugin.ui.includeMetadata");
   bindHtmlCheckbox(doc, `#zotero-prefpane-${config.addonRef}-semantic-auto-update`, "extensions.zotero.zotero-mcp-plugin.semantic.autoUpdate");
