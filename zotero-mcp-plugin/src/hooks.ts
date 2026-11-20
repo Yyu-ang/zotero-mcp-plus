@@ -6,7 +6,13 @@ import { registerPrefsScripts } from "./modules/preferenceScript";
 import { createZToolkit } from "./utils/ztoolkit";
 import { MCPSettingsService } from "./modules/mcpSettingsService";
 import { registerSemanticIndexColumn, unregisterSemanticIndexColumn, refreshSemanticColumn } from "./modules/semanticIndexColumn";
-import { registerSemanticSearchToolbar, registerFindSimilarMenu, unregisterSemanticSearchUI } from "./modules/semanticSearchDialog";
+import {
+  registerSemanticSearchPrefObserver,
+  registerSemanticSearchToolbar,
+  registerFindSimilarMenu,
+  unregisterSemanticSearchUI,
+  unregisterSemanticSearchPrefObserver,
+} from "./modules/semanticSearchDialog";
 import {
   flushNotifierCommits,
   flushWriteOperations,
@@ -493,6 +499,16 @@ async function onStartup() {
   registerItemNotifier();
   ztoolkit.log("[MCP Plugin] [STARTUP] Item notifier registered");
 
+  // Register semantic-search preference observer so toggling the pref at
+  // runtime adds or removes the toolbar button, the context menu and the
+  // open dialog (the MCP tools check the pref on every call).
+  try {
+    registerSemanticSearchPrefObserver();
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    ztoolkit.log(`[MCP Plugin] [STARTUP] Error registering semantic-search preference observer: ${err.message}`, "error");
+  }
+
   addon.data.initialized = true;
   ztoolkit.log("[MCP Plugin] ======== STARTUP COMPLETE ========");
 }
@@ -649,6 +665,15 @@ async function onShutdown(): Promise<void> {
 
   ztoolkit.log("[MCP Plugin] [SHUTDOWN] Unregistering server preferences...");
   serverPreferences.unregister();
+
+  // Unregister the semantic-search preference observer so it cannot fire
+  // during teardown.
+  try {
+    unregisterSemanticSearchPrefObserver();
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    ztoolkit.log(`[MCP Plugin] [SHUTDOWN] Error unregistering semantic-search preference observer: ${err.message}`, "error");
+  }
 
   ztoolkit.unregisterAll();
   addon.data.alive = false;

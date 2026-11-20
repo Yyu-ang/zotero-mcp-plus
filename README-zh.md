@@ -30,6 +30,12 @@ Zotero MCP 服务器是一个基于 Model Context Protocol 的工具服务器，
 
 这使得 AI 助手能够帮助您进行文献综述、引用管理、内容分析、批注整理、知识库管理等学术工作。
 
+### 致谢
+
+语义搜索对话框界面改编自 [ZotSeek](https://github.com/introfini/ZotSeek)（作者 José Fernandes），依据 MIT License 使用，版权归 José Fernandes（2025）所有。
+
+语义搜索工具栏图标来自 [SVGRepo](https://svgrepo.com)，采用 SVG Repo License / CC0 公共领域奉献协议授权。
+
 ## 🚀 项目结构
 
 本项目采用了**统一架构**，将 MCP 服务器集成在插件内：

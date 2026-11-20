@@ -31,7 +31,9 @@ This enables AI assistants to help you with literature reviews, citation managem
 
 ### Acknowledgment
 
-The semantic-search dialog UI is adapted from [ZotSeek](https://github.com/introfini/ZotSeek) by José Fernandes and is used under the MIT License.
+The semantic-search dialog UI is adapted from [ZotSeek](https://github.com/introfini/ZotSeek) by José Fernandes, Copyright (c) 2025 José Fernandes, and is used under the MIT License.
+
+The semantic-search toolbar icon is an SVGRepo asset ([svgrepo.com](https://svgrepo.com)), distributed under the SVG Repo License / CC0 Public Domain Dedication.
 
 ## 🚀 Project Structure
 

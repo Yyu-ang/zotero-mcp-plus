@@ -1,4 +1,10 @@
-<!-- Toolbar icon used with the ZotSeek-adapted semantic search UI; ZotSeek is MIT licensed. -->
+<!--
+  Toolbar icon used with the ZotSeek-adapted semantic search UI.
+  The magnifying-glass and brain paths are SVGRepo assets (svgrepo.com) and are
+  covered by the SVG Repo License / CC0 Public Domain Dedication, which allows
+  use, modification and redistribution without attribution.
+  ZotSeek (https://github.com/introfini/ZotSeek) is Copyright (c) 2025 José Fernandes, MIT License.
+-->
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="20" viewBox="0 0 96 96">
   <defs>
     <clipPath id="clip-search-brain_96px">
