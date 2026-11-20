@@ -1,0 +1,40 @@
+name: Review integration workspace
+on:
+  push:
+    branches: [automation/review-integration-20261120]
+    paths: [.github/workflows/review-integration-runner.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch pinned source histories
+        run: |
+          set -euo pipefail
+          git fetch https://github.com/cookjohn/zotero-mcp.git main:refs/heads/snapshot/upstream
+          test "$(git rev-parse snapshot/upstream)" = fad02b8641fe0c04ced4d8d2038339c9c0975692
+          git fetch https://github.com/cloneorcopy/zotero-mcp-plus.git feat/embedded-oauth-chatgpt:refs/heads/snapshot/fork
+          test "$(git rev-parse snapshot/fork)" = dd6d06b82d205f180439f2c81d162f4bafb79307
+          mkdir -p /tmp/review-workspace
+          git bundle create /tmp/review-workspace/source.bundle --all
+          git log -20 --oneline snapshot/fork > /tmp/review-workspace/fork-history.txt
+          git log -20 --oneline snapshot/upstream > /tmp/review-workspace/upstream-history.txt
+      - name: Install build dependencies
+        working-directory: zotero-mcp-plugin
+        run: |
+          npm ci
+          tar -czf /tmp/review-workspace/node_modules.tgz node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-workspace
+          path: /tmp/review-workspace/
+          retention-days: 7
