@@ -21,12 +21,15 @@ import { UnifiedContentExtractor } from './unifiedContentExtractor';
 import { SmartAnnotationExtractor } from './smartAnnotationExtractor';
 import { MCPSettingsService } from './mcpSettingsService';
 import { getSemanticSearchService, SemanticSearchService } from './semantic';
+import { getToolRegistry } from './toolRegistry';
+import { version as pluginVersion } from '../../package.json';
 import {
   commitNotifierQueue,
   createNotifierQueue,
   notifierSaveOptions,
   runSerializedWrite,
 } from './deferredNotifierCommitter';
+import { CitationExportService } from './citationExportService';
 
 export interface MCPRequest {
   jsonrpc: '2.0';
@@ -68,7 +71,8 @@ export class StreamableMCPServer {
   private isInitialized: boolean = false;
   private serverInfo = {
     name: 'zotero-integrated-mcp',
-    version: '1.1.0',
+    // Follows the release version instead of a hard-coded string (#114, #118).
+    version: pluginVersion,
   };
   private clientSessions: Map<string, { initTime: Date; lastActivity: Date; clientInfo?: any }> = new Map();
 
@@ -297,10 +301,15 @@ export class StreamableMCPServer {
   }
 
 
-  private handleToolsList(request: MCPRequest): MCPResponse {
-    const tools = [
+  private buildToolDefinitions(): any[] {
+    // MCP annotation: tools that only read Zotero data. Write tools
+    // below must not be marked read-only.
+    const readOnly = { annotations: { readOnlyHint: true } };
+
+    return [
       {
         name: 'get_libraries',
+        ...readOnly,
         description: 'List all Zotero libraries available in the current client. Returns minimal library metadata for each library as a paginated array.',
         inputSchema: {
           type: 'object',
@@ -312,6 +321,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'search_library',
+        ...readOnly,
         description: 'Search the Zotero library with advanced parameters, boolean operators, relevance scoring, and pagination. Results are from user\'s personal library. Use itemKey with get_content for full text. To find standalone PDFs without metadata, use itemType="attachment" with includeAttachments="true".',
         inputSchema: {
           type: 'object',
@@ -366,6 +376,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'search_libraries',
+        ...readOnly,
         description: 'Search libraries by name',
         inputSchema: {
           type: 'object',
@@ -379,6 +390,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'search_annotations',
+        ...readOnly,
         description: 'Search and filter annotations (highlights, notes, comments) by query, colors, or tags. Returns user\'s personal research notes with relevance scoring. Preserve exact wording when quoting.',
         inputSchema: {
           type: 'object',
@@ -435,6 +447,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'get_item_details',
+        ...readOnly,
         description: 'Get detailed bibliographic metadata for a specific item (title, authors, dates, identifiers, attachments, notes, tags). Use get_content for full text. Suitable for generating citations and references.',
         inputSchema: {
           type: 'object',
@@ -455,6 +468,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'get_annotations',
+        ...readOnly,
         description: 'Get annotations and notes for specific items with color/tag filtering. REQUIRED: provide one of itemKey, annotationId, or annotationIds (use search_library first to find the itemKey; use search_annotations to search by colors/tags across the library). Returns user\'s personal highlights and comments from PDFs. Preserve exact wording when quoting.',
         inputSchema: {
           type: 'object',
@@ -506,6 +520,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'get_content',
+        ...readOnly,
         description: 'Get full-text content from PDFs, attachments, notes, and abstracts. May contain OCR artifacts. When user asks for complete text, provide it without summarization.',
         inputSchema: {
           type: 'object',
@@ -569,6 +584,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'get_collections',
+        ...readOnly,
         description: 'Get collections in the library. By default returns a flat, paginated list of top-level collections. Use recursive=true to retrieve the complete nested collection tree (all levels) in one call. Use parentCollection to scope to a specific parent\'s direct children.',
         inputSchema: {
           type: 'object',
@@ -597,6 +613,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'search_collections',
+        ...readOnly,
         description: 'Search collections by name',
         inputSchema: {
           type: 'object',
@@ -612,6 +629,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'get_collection_details',
+        ...readOnly,
         description: 'Get detailed information about a specific collection',
         inputSchema: {
           type: 'object',
@@ -627,6 +645,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'get_collection_items',
+        ...readOnly,
         description: 'Get items in a specific collection',
         inputSchema: {
           type: 'object',
@@ -644,6 +663,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'get_subcollections',
+        ...readOnly,
         description: 'Get subcollections (child collections) of a specific collection. Use recursive=true to retrieve the full nested hierarchy of all descendant collections.',
         inputSchema: {
           type: 'object',
@@ -783,6 +803,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'search_fulltext',
+        ...readOnly,
         description: 'Search within full-text content of all documents. Returns matching passages with context. Use get_content with itemKey for complete text of a result.',
         inputSchema: {
           type: 'object',
@@ -811,6 +832,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'get_item_abstract',
+        ...readOnly,
         description: 'Get the abstract/summary of a specific item. Typically the author\'s own summary from the original publication.',
         inputSchema: {
           type: 'object',
@@ -832,6 +854,7 @@ export class StreamableMCPServer {
       // Semantic Search Tools
       {
         name: 'semantic_search',
+        ...readOnly,
         description: 'AI-powered semantic search using embeddings. Finds conceptually related content even without exact keyword matches. Combine with keyword search (search_library, search_fulltext) for comprehensive results.',
         inputSchema: {
           type: 'object',
@@ -859,6 +882,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'find_similar',
+        ...readOnly,
         description: 'Find items semantically similar to a given item using AI embeddings. Useful for expanding research from a known relevant paper and discovering thematic clusters.',
         inputSchema: {
           type: 'object',
@@ -881,6 +905,7 @@ export class StreamableMCPServer {
       },
       {
         name: 'semantic_status',
+        ...readOnly,
         description: 'Get the status of the semantic search service including index statistics.',
         inputSchema: {
           type: 'object',
@@ -890,6 +915,7 @@ export class StreamableMCPServer {
       // Full-text Database Tool (read-only operations)
       {
         name: 'fulltext_database',
+        ...readOnly,
         description: 'Access the cached full-text content database (read-only). Faster than re-extracting from Zotero. Actions: list (cached items), search (find text), get (retrieve content), stats (database info).',
         inputSchema: {
           type: 'object',
@@ -1152,27 +1178,131 @@ export class StreamableMCPServer {
             }
           }
         }
-      }
+      },
+      {
+        name: 'export_bibliography',
+        ...readOnly,
+        description: 'Export one or more Zotero items as BibLaTeX/BibTeX (or CSL-JSON/CSL-YAML) entries powered by the zotero-better-bibtex (BBT) plugin. Requires Better BibTeX to be installed and running in Zotero. Use search_library first to find itemKeys, then pass them here. Returns the exported bibliography text (e.g. @article{...} entries).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            libraryID: {
+              type: 'number',
+              description: 'Optional target Zotero library ID. Defaults to the user library when omitted.'
+            },
+            itemKeys: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Item keys to export, e.g. ["ABCD1234","EFGH5678"]'
+            },
+            format: {
+              type: 'string',
+              enum: ['biblatex', 'bibtex', 'csljson', 'cslyaml'],
+              description: 'Export format. biblatex = Better BibLaTeX (default), bibtex = Better BibTeX, csljson = Better CSL JSON, cslyaml = Better CSL YAML.'
+            }
+          },
+          required: ['itemKeys']
+        }
+      },
+      {
+        name: 'get_citation',
+        ...readOnly,
+        description: 'Generate a formatted reference (bibliography entry) or in-text citation for one or more items using a CSL citation style. If no style is specified, uses the Zotero default Quick Copy style. Use list_citation_styles to discover available styles. Works without Better BibTeX (uses Zotero native citeproc).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            libraryID: {
+              type: 'number',
+              description: 'Optional target Zotero library ID. Defaults to the user library when omitted.'
+            },
+            itemKeys: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Item keys to cite, e.g. ["ABCD1234"]'
+            },
+            style: {
+              type: 'string',
+              description: 'Optional CSL style ID or title, e.g. "apa", "ieee", "http://www.zotero.org/styles/american-medical-association". Omit to use the Zotero default Quick Copy style.'
+            },
+            contentType: {
+              type: 'string',
+              enum: ['html', 'text'],
+              description: 'Output content type: html (default) or plain text.'
+            },
+            mode: {
+              type: 'string',
+              enum: ['bibliography', 'citation'],
+              description: 'Generation mode: bibliography (default, full reference entry) or citation (in-text citation).'
+            }
+          },
+          required: ['itemKeys']
+        }
+      },
+      {
+        name: 'list_citation_styles',
+        ...readOnly,
+        description: 'List CSL citation styles available in Zotero (for use with get_citation). Each entry includes an id (styleID) and a human-readable title. Supports optional keyword filtering.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filter: {
+              type: 'string',
+              description: 'Optional case-insensitive keyword to filter styles by title or id (e.g. "apa", "ieee", "chicago")'
+            }
+          },
+        }
+      },
     ];
+  }
+
+  /**
+   * Tools currently exposed to clients: semantic tools only when semantic
+   * search is enabled, write tools only when writes are enabled.
+   *
+   * Single source of truth — `tools/list` and the `/mcp/status` diagnostics
+   * both read it, so the advertised list cannot drift from reality (#119).
+   */
+  private getRuntimeTools(): any[] {
+    const tools = this.buildToolDefinitions();
 
     // Filter out semantic tools if semantic search is disabled
     const semanticEnabled = Zotero.Prefs.get('extensions.zotero.zotero-mcp-plugin.semantic.enabled', true);
-    const semanticToolNames = new Set(['semantic_search', 'find_similar', 'semantic_status']);
+    const semanticTools: Record<string, true> = {
+      semantic_search: true,
+      find_similar: true,
+      semantic_status: true,
+    };
     const filteredTools = semanticEnabled === false
-      ? tools.filter((t: any) => !semanticToolNames.has(t.name))
+      ? tools.filter((t: any) => semanticTools[t.name] !== true)
       : tools;
 
     // Filter out write tools if write operations are disabled (default: disabled)
     const writeEnabled = Zotero.Prefs.get('extensions.zotero.zotero-mcp-plugin.write.enabled', true);
-    const writeToolNames = new Set([
-      'write_note', 'write_tag', 'write_metadata', 'write_item', 'add_by_identifier',
-      'trash_item',
-    ]);
-    const finalTools = writeEnabled === true
+    const writeTools: Record<string, true> = {
+      write_note: true,
+      write_tag: true,
+      write_metadata: true,
+      write_item: true,
+      add_by_identifier: true,
+      trash_item: true,
+    };
+    const builtinTools = writeEnabled === true
       ? filteredTools
-      : filteredTools.filter((t: any) => !writeToolNames.has(t.name));
+      : filteredTools.filter((t: any) => writeTools[t.name] !== true);
 
-    return this.createResponse(request.id ?? null, { tools: finalTools });
+    // Append tools registered by other Zotero plugins. Names that collide
+    // with any built-in tool (including ones hidden above) are skipped: the
+    // built-in dispatcher always wins, and duplicate names in tools/list
+    // make some MCP clients reject the whole list.
+    const builtinNames = new Set(tools.map((t: any) => t.name));
+    const externalTools = getToolRegistry()
+      .getToolDefinitions()
+      .filter((t) => !builtinNames.has(t.name));
+    return [...builtinTools, ...externalTools];
+  }
+
+  private handleToolsList(request: MCPRequest): MCPResponse {
+    return this.createResponse(request.id ?? null, { tools: this.getRuntimeTools() });
   }
 
   private async handleToolCall(request: MCPRequest): Promise<MCPResponse> {
@@ -1451,8 +1581,50 @@ export class StreamableMCPServer {
           break;
         }
 
-        default:
+        case 'export_bibliography': {
+          const exportKeys = this.coerceStringArray(args?.itemKeys);
+          if (!exportKeys || exportKeys.length === 0) {
+            throw new Error(
+              `itemKeys array is required, e.g. ["ABCD1234"]. Received: ${JSON.stringify(args?.itemKeys)}`,
+            );
+          }
+          result = await this.callExportBibliography({
+            ...args,
+            itemKeys: exportKeys,
+          });
+          break;
+        }
+
+        case 'get_citation': {
+          const citationKeys = this.coerceStringArray(args?.itemKeys);
+          if (!citationKeys || citationKeys.length === 0) {
+            throw new Error(
+              `itemKeys array is required, e.g. ["ABCD1234"]. Received: ${JSON.stringify(args?.itemKeys)}`,
+            );
+          }
+          result = await this.callGetCitation({
+            ...args,
+            itemKeys: citationKeys,
+          });
+          break;
+        }
+
+        case 'list_citation_styles':
+          result = await this.callListCitationStyles(args);
+          break;
+
+        default: {
+          // Check externally-registered tools from other Zotero plugins
+          const registry = getToolRegistry();
+          const externalTool = registry.getTool(name);
+          // Disabled tools are hidden from tools/list and must not be callable.
+          if (externalTool && externalTool.enabled !== false) {
+            ztoolkit.log(`[StreamableMCP] Calling external tool: ${name}`);
+            result = await externalTool.handler(args);
+            break;
+          }
           throw new Error(`Unknown tool: ${name}`);
+        }
       }
 
       // Wrap result in MCP content format with proper text type.
@@ -1846,6 +2018,51 @@ export class StreamableMCPServer {
     }
     const result = response.body ? JSON.parse(response.body) : response;
     return result;
+  }
+
+  // ============ Citation & Bibliography Export Methods ============
+
+  private citationExportService: CitationExportService | null = null;
+
+  private getCitationExportService(): CitationExportService {
+    if (!this.citationExportService) {
+      this.citationExportService = new CitationExportService();
+    }
+    return this.citationExportService;
+  }
+
+  /**
+   * 【功能 1】通过 zotero-better-bibtex 导出 BibLaTeX/BibTeX 条目。
+   */
+  private async callExportBibliography(args: any): Promise<any> {
+    const service = this.getCitationExportService();
+    return service.exportBibliography({
+      itemKeys: args.itemKeys,
+      format: args.format,
+      libraryID: args.libraryID,
+    });
+  }
+
+  /**
+   * 【功能 2】生成指定 CSL 样式的参考文献条目（未指定样式时使用默认样式）。
+   */
+  private async callGetCitation(args: any): Promise<any> {
+    const service = this.getCitationExportService();
+    return service.getCitation({
+      itemKeys: args.itemKeys,
+      style: args.style,
+      contentType: args.contentType,
+      mode: args.mode,
+      libraryID: args.libraryID,
+    });
+  }
+
+  /**
+   * 列出可用的 CSL 引文样式。
+   */
+  private async callListCitationStyles(args: any): Promise<any> {
+    const service = this.getCitationExportService();
+    return service.listStyles(args?.filter);
   }
 
   // ============ Semantic Search Methods ============
@@ -3307,34 +3524,9 @@ export class StreamableMCPServer {
         'prompts/list',
         'ping'
       ],
-      availableTools: [
-        'get_libraries',
-        'search_libraries',
-        'search_library',
-        'search_annotations',
-        'get_item_details',
-        'get_annotations',
-        'get_content',
-        'get_collections',
-        'search_collections',
-        'get_collection_details',
-        'get_collection_items',
-        'search_fulltext',
-        'get_item_abstract',
-        // Semantic Search Tools (read-only)
-        'semantic_search',
-        'find_similar',
-        'semantic_status',
-        // Full-text Database Tool (read-only)
-        'fulltext_database',
-        // Write Tools
-        'write_note',
-        'write_tag',
-        'write_metadata',
-        'write_item',
-        'add_by_identifier',
-        'trash_item'
-      ],
+      // Derived from tools/list so the diagnostics endpoint cannot advertise a
+      // stale hand-maintained list (#119).
+      availableTools: this.getRuntimeTools().map((tool: any) => tool.name),
       transport: {
         type: "streamable-http",
         keepAliveSupported: false,
